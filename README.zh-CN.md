@@ -1,6 +1,9 @@
 # 泰拉瑞亚（安卓）修改技能包 & 修改器菜单
 
 > English: [README.md](README.md) · 本仓库所有结论都是**在真机上实测**出来的，不是通用攻略。
+>
+> **⬇️ 下载**：[最新发布包](https://github.com/abcd123rft/terraria-android-modding/releases/latest)
+> （文档 + 菜单 + 工具的 zip，**不含游戏素材**）· 也可以直接浏览下面的目录。
 
 给安卓版《泰拉瑞亚》（Unity + IL2CPP；实测于**国服** `com.xd.terraria` `1.4.56002`，Unity 2021.3.26f1c1，
 Android 16）用的**可复用技能包 + 能直接跑的修改器菜单**。包含：按**名字**操作 il2cpp 改功能、

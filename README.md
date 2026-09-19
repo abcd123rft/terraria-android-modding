@@ -1,6 +1,9 @@
 # Terraria (Android) Modding Skill & Mod Menu
 
 > **中文说明见 [README.zh-CN.md](README.zh-CN.md)** · Everything here was measured on a real device — no generic advice.
+>
+> **⬇️ Download:** [latest release](https://github.com/abcd123rft/terraria-android-modding/releases/latest)
+> (zip with docs + menu + tools, **no game assets**) · or just browse the folders below.
 
 A reusable **skill package + working mod menu** for modding the Android build of *Terraria*
 (Unity + IL2CPP; verified on the CN build `com.xd.terraria` `1.4.56002`, Unity 2021.3.26f1c1, Android 16).

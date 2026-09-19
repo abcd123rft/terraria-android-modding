@@ -1,0 +1,16 @@
+# never commit game assets or extracted content
+*.png
+*.jpg
+*.apk
+*.unity3d
+*.assets
+*.resS
+*.resource
+*.dat
+物品矩形表*.json
+item_rects*.json
+terraria_icons/
+unpack/
+__pycache__/
+*.pyc
+.DS_Store

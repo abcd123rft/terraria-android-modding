@@ -1,0 +1,74 @@
+# 泰拉瑞亚（安卓）修改技能包 & 修改器菜单
+
+> English: [README.md](README.md) · 本仓库所有结论都是**在真机上实测**出来的，不是通用攻略。
+
+给安卓版《泰拉瑞亚》（Unity + IL2CPP；实测于**国服** `com.xd.terraria` `1.4.56002`，Unity 2021.3.26f1c1，
+Android 16）用的**可复用技能包 + 能直接跑的修改器菜单**。包含：按**名字**操作 il2cpp 改功能、
+用 **Android 系统 UI** 做游戏内菜单（触摸不穿透）、从安装包**离线提取物品图标**。
+
+- **验证于**：2026-09-19 · 国服 `1.4.56002`（versionCode 303538）· OnePlus PKR110 / Android 16
+- **请先读 [skill/FRESHNESS.md](skill/FRESHNESS.md)**：包内所有数字都是某次快照，哪些会随游戏更新失效、
+  失效后怎么重建，都写在里面。
+
+## 目录
+
+| 路径 | 内容 |
+|---|---|
+| [`skill/SKILL.md`](skill/SKILL.md) | 主技能（中文）：环境与通道、按名字操作 il2cpp、每帧效果的正确挂法、功能配方、菜单设计、图标流水线、抗更新 |
+| [`skill/SKILL.en.md`](skill/SKILL.en.md) | 英文版（带 YAML frontmatter，可当 agent 技能加载） |
+| [`skill/FRESHNESS.md`](skill/FRESHNESS.md) | 时效性台账：验证日期、目标版本、哪些常量会过期、怎么重建、三步自检 |
+| [`skill/reference/pitfalls.md`](skill/reference/pitfalls.md) | **34 条实测坑**：现象 → 真因 → 修法（含把游戏打崩的栈溢出事故） |
+| [`skill/reference/menu-implementation.md`](skill/reference/menu-implementation.md) | 可直接抄的代码模式：tag 分发、面板骨架、自适应高度、虚拟列表、图标裁剪、天气同步、无子弹 |
+| [`menu/terraria-mod-menu.js`](menu/terraria-mod-menu.js) | ⭐ 现成修改器菜单（约 280KB）：6 个标签页、图标网格+搜索、9 个事件开关、武器改造、虚拟列表 |
+| [`menu/MENU-MANUAL.zh-CN.md`](menu/MENU-MANUAL.zh-CN.md) | 菜单使用说明（功能清单 / 布局 / 性能 / 更新应对） |
+| [`tools/`](tools) | `jshook.py`（注入客户端）· 图标/名字表生成 · 安装包解包 · Texture2D 解析 · 本地图标服务 |
+
+## 方法要点
+
+- **按名字找成员，绝不用固定地址**：`il2cpp_class_from_name` + 按名字查字段/方法，
+  方法查找**带参数个数兜底**（游戏更新可能改 argc）。
+- **每帧效果要挂对钩子**：`PlayerFrame` 是帧内最后一个 `Player` 方法，但 `moveSpeed`/`statDefense`
+  每帧被 `ResetEffects()` 清零 → 这些必须在 **`Player.UpdateEquips`**（重置之后、移动之前）里写；
+  本环境 `onLeave` 不触发。
+- **用 Android 系统 UI 而不是 ImGui 覆盖层**：`Activity.addContentView` 把原生 View 挂进游戏窗口 →
+  触摸不穿透、退出游戏即消失。
+- **稳定性红线**：热路径里绝不 `Java.registerClass` —— 每个动态类都会新增 `DexClassLoader`，
+  ART 编「类加载器上下文」是递归的，注册多了会**栈溢出把游戏打崩**（tombstone 特征见踩坑文档）。
+  改成「每类监听器一个类 + `View.setTag` 分发」。
+- **能离线就离线**：物品名、图集矩形、分类数据都在游戏外生成（图集矩形表明文存在 `resources.assets` 里，
+  key = `CRC32("item_<id>.png")`；图集 PNG **上下翻转存放**，裁剪要 `(X, 2048−Y−H)`）。
+
+## 快速开始
+
+```bash
+# ① 把菜单下发进正在运行的游戏（JsHook / Frida 宿主，MCP 在 127.0.0.1:19820）
+cd menu
+python3 ../tools/jshook.py exec --file terraria-mod-menu.js --wait 7
+
+# ② 图标：菜单会把两张 2048² 图集拉进游戏私有缓存。
+#    图集请用 tools/ 从**你自己的**游戏安装包里提取，放到
+#    /sdcard/Download/DSHA/terraria_icons/atlas_0.png 与 atlas_1.png；
+#    若游戏进程读不到 /sdcard，用本地服务供一次：
+python3 ../tools/icon_http_server.py 8899
+
+# ③ 每次下发后跑一遍全量自检
+python3 ../tools/jshook.py exec --file terraria-mod-menu.js --sub "selfTest: false||selfTest: true" --wait 12
+```
+
+## 环境要求
+
+- 安卓设备（arm64）+ 已安装游戏；**Frida 注入通道**（如 JsHook）可达 `127.0.0.1:19820`
+  （key 默认 `/root/.dsh/jshook_key`，可用 `JSHOOK_KEY_FILE` 覆盖）。
+- Python 3；离线解包另需 `lz4`、`Pillow`、`texture2ddecoder`。
+- 菜单按国服包名写，其他版本用 `jshook.py --package` 指定。
+
+## 版权与合规（重要）
+
+- **本仓库不含任何游戏素材**：两张图集、物品名/矩形表等提取物都不入库；脚本面向**你自己合法拥有的游戏副本**运行
+  （这也是 mod 工具社区的通行做法）。
+- `menu/terraria-mod-menu.js` 内嵌了**为互操作而必需的派生数据**（物品 id/名称、图集矩形），开箱即用；
+  你也可以用 `tools/` 在本地重新生成这些表后自行构建（见 `skill/SKILL.md` §7）。
+- 这是**单机向的内存修改器**：请只在自己的世界里用，**不要用于多人游戏**、不要再分发游戏素材，
+  并遵守游戏服务条款与当地法律。
+- 仓库代码采用 MIT 许可（见 [LICENSE](LICENSE)）；*泰拉瑞亚* 及素材版权归 Re-Logic / 相应发行商所有，
+  本项目非官方、与其无关联。

@@ -1500,10 +1500,16 @@ var UI = (function () {
   /* 背包网格的首次构建 ≈ 220ms（59 格 × 5 个 View），同样挪到挂载后空闲时做，
      免得用户第一次点「背包」标签时干等。 */
   function prewarmBag() {
-    if (UI.bagDebug && S.groups['bag-grid'] && S.groups['bag-grid'].getChildCount() > 1) return;   // 已经建过
+    if (BAG.built && BAG.tiles.length > 0) return true;             // 已经建好（有格子）
+    if (!IL.player()) { log('预热：还没有活跃角色，背包网格等进世界后再建'); return false; }
     var t0 = Date.now();
-    try { UI.bagBuild(); prof('预热：背包网格已建好', t0); log('预热完成：背包网格已预建'); }
-    catch (e) { err('预热背包', e); }
+    try {
+      bagBuild();
+      if (!BAG.built) return false;                                 // 建格自行放弃（没角色/没容器）
+      prof('预热：背包网格已建好', t0);
+      log('预热完成：背包网格已预建（' + BAG.tiles.length + ' 格）');
+      return true;
+    } catch (e) { err('预热背包', e); return false; }
   }
   function pickItem(onPick, startCat, startFilter) {
     if (PICK.open) { PICK.open(onPick, startCat, startFilter); return; }
@@ -1939,11 +1945,21 @@ var UI = (function () {
         LLP = juse('android.widget.LinearLayout$LayoutParams'), GR = juse('android.view.Gravity');
     var host = S.groups['bag-grid'];
     if (!host) { BAG.inProgress = false; log('背包：找不到 bag-grid 容器'); return; }
+    /* ⚠ 必须先确认有活跃角色：bagSlots() 在没有角色时返回 0（还没进世界 / 在标题界面），
+       此时下面循环里 `slot >= N` 恒真 → 只会建出「5 个分区标题 + 16 个空行」，一个格子都没有，
+       但 BAG.built 照样置位 → 进世界后也不会重建；而子节点数（21）又正好等于期望值 → 自愈也发现不了。
+       （2026-09-20 实测踩到：预热在标题界面跑，背包页永远只剩分区标题。） */
+    var N = bagSlots();
+    if (!(N > 0)) {
+      BAG.inProgress = false;
+      log('背包：还没有活跃角色（槽位 0），先不建格，等进世界后再建');
+      return;
+    }
     BAG.builds = (BAG.builds || 0) + 1;
     log('背包：建格开始（第 ' + BAG.builds + ' 次，host现有子节点 ' + host.getChildCount() + '，built=' + BAG.built + '）');
     /* 关键：先清空容器再建 —— 否则重复调用会在下面再叠一整套标题+网格 */
     try { host.removeAllViews(); } catch (e) { err('清空背包容器', e); }
-    var N = bagSlots(), ICON_PX = dp(38);
+    var ICON_PX = dp(38);
     BAG.tiles = [];
     BAG_GROUPS.forEach(function (g) {
       var head = TV.$new(act);
@@ -2012,9 +2028,13 @@ var UI = (function () {
   function bagRefresh(force) {
     /* 自愈：容器换了、或子节点数对不上（说明被重复建过/被外部改过）→ 重建一次（建格是幂等的） */
     var h = S.groups['bag-grid'];
-    if (!BAG.built || !h || BAG.host !== h || h.getChildCount() !== BAG.expectChildren) {
+    /* 自愈条件：没建过 / 容器换了 / 子节点数对不上 / **一个格子都没有但槽位明明存在**
+       （最后一条专门兜住「在标题界面预热建出的空网格」这种历史遗留状态） */
+    var noTiles = (BAG.tiles.length === 0) && (bagSlots() > 0);
+    if (!BAG.built || !h || BAG.host !== h || h.getChildCount() !== BAG.expectChildren || noTiles) {
       if (BAG.inProgress) return;                 // 正在建格就别插手
-      if (h && BAG.built) log('背包：结构异常（子节点 ' + h.getChildCount() + ' ≠ 期望 ' + BAG.expectChildren + '）→ 自动重建');
+      if (h && BAG.built && noTiles) log('背包：网格里没有格子（当前槽位 ' + bagSlots() + '）→ 自动重建');
+      else if (h && BAG.built) log('背包：结构异常（子节点 ' + h.getChildCount() + ' ≠ 期望 ' + BAG.expectChildren + '）→ 自动重建');
       BAG.built = false;
       bagBuild();
     }
@@ -3219,6 +3239,12 @@ else {
     /* 轮询手持武器种类，决定面板上显示哪一组选项 */
     globalThis.TERRARIA_SYS_MENU_TIMERS.push(setInterval(function () {
       try { pollHeld(); } catch (e) {}
+      /* 预热时还没进世界（没有活跃角色）→ 一出现角色就补建一次，别让用户白等 200ms */
+      try {
+        if (CFG.prewarm && UI.S.ctx && !UI.S.bagPrewarmed && IL.player()) {
+          if (UI.prewarmBag()) UI.S.bagPrewarmed = true;
+        }
+      } catch (e) {}
       /* 停在「背包」页时每秒刷新一次（脏检查，只更新变了的格子） */
       try {
         if (UI.S.activePage === 'pg-item') {

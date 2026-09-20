@@ -69,6 +69,14 @@ python3 ../tools/jshook.py exec --file terraria-mod-menu.js --sub "selfTest: fal
 
 ## Changelog (latest first)
 
+**v1.2.6**
+- Fixed the **bag page showing only the five section headers, no slots**: the new "prewarm" ran on the title screen
+  (no active player yet, so the slot count read 0) and built five headers plus sixteen empty rows while still marking
+  itself built — and because that row count equalled the expected child count, the self-heal check could not notice.
+  Now the grid is only built when `bagSlots() > 0`, the self-heal also rebuilds when there are zero tiles but slots
+  exist, and a failed prewarm is retried by the poll **as soon as a player appears** (which lands during world loading,
+  hiding the hitch).
+
 **v1.2.5**
 - New **"Paths & configuration"** section (manual §10, SKILL.md §11, this README): exactly what to edit when you move
   the assets or the scripts — only two constants live inside the game process (atlas fallback `DIR`, atlas HTTP `HTTP`),

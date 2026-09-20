@@ -1573,6 +1573,11 @@ var UI = (function () {
         LLP = juse('android.widget.LinearLayout$LayoutParams'), GR = juse('android.view.Gravity');
     var host = S.groups['bag-grid'];
     if (!host) { log('背包：找不到 bag-grid 容器'); return; }
+    /* 关键：先清空容器再建。任何原因导致 bagBuild 被调用第二次（重入/页面重复进入/守卫失效），
+       否则会在下面再叠一整套标题+网格 —— 用户看到的就是「上面 4 块空白分区，下面 4 块有内容」。 */
+    try { host.removeAllViews(); } catch (e) { err('清空背包容器', e); }
+    BAG.builds = (BAG.builds || 0) + 1;
+    if (BAG.builds > 1) log('背包：警告——建格被调用第 ' + BAG.builds + ' 次（已清空重建）');
     var N = bagSlots(), ICON_PX = dp(38);
     BAG.tiles = [];
     BAG_GROUPS.forEach(function (g) {
@@ -1709,25 +1714,33 @@ var UI = (function () {
     title.setTextSize(11); title.setTextColor(C.title);
     title.setPadding(dp(2), 0, dp(2), dp(4));
     box.addView(title);
-    function addBtn(label, actionId, danger) {
-      var b = BT.$new(act); b.setText(jStr(label)); b.setTextSize(11);
-      b.setTextColor(danger ? C.warn : C.text);
-      K.compact(b); b.setBackground(K.flat(C.btn));
-      var lp = LLP.$new(MATCH, WRAP); lp.bottomMargin.value = dp(3);
-      b.setLayoutParams(lp);
-      K.bindClick(b, function () { bagClosePopup(); try { S.dispatch(actionId); } catch (e) { err('背包操作 ' + actionId, e); } });
-      box.addView(b);
-      return b;
+    /* 两列紧凑排布：竖排 7 个按钮要 780px（占屏 72%），根本贴不到格子旁边 */
+    function addRow(pairs) {
+      var row = LL.$new(act); row.setOrientation(0); row.setLayoutParams(LLP.$new(MATCH, WRAP));
+      for (var i = 0; i < pairs.length; i++) {
+        var label = pairs[i][0], actionId = pairs[i][1], danger = pairs[i][2];
+        var b = BT.$new(act); b.setText(jStr(label)); b.setTextSize(10);
+        b.setTextColor(danger ? C.warn : C.text);
+        K.compact(b); b.setBackground(K.flat(C.btn));
+        b.setPadding(dp(2), dp(4), dp(2), dp(4));
+        var lp = LLP.$new(0, WRAP, 1.0);
+        if (i) lp.leftMargin.value = dp(3);
+        lp.bottomMargin.value = dp(3);
+        b.setLayoutParams(lp);
+        K.bindClick(b, function () { bagClosePopup(); try { S.dispatch(actionId); } catch (e) { err('背包操作 ' + actionId, e); } });
+        row.addView(b);
+      }
+      box.addView(row);
     }
     var isCoin = (bagGroupOf(slot).kind === 'coin'), isAmmo = (bagGroupOf(slot).kind === 'ammo');
-    addBtn(isCoin ? '放入钱币（选物品）' : isAmmo ? '放入弹药（选物品）' : '放入 / 替换物品', 'bag-replace');
+    var putLabel = isCoin ? '放入钱币' : isAmmo ? '放入弹药' : '放入/替换';
     if (d && d.type > 0) {
-      addBtn('改数量', 'bag-count');
-      addBtn('复制到空格', 'bag-copy');
-      addBtn('删除该格', 'bag-del', true);
+      addRow([[putLabel, 'bag-replace'], ['改数量', 'bag-count']]);
+      addRow([['复制到空格', 'bag-copy'], ['删除该格', 'bag-del', true]]);
+    } else {
+      addRow([[putLabel, 'bag-replace'], ['关闭', '__bag-close']]);
     }
-    addBtn('⚠ 清空整个背包', 'bag-clear', true);
-    addBtn('关闭', '__bag-close');
+    addRow([['⚠清空背包', 'bag-clear', true], ['关闭', '__bag-close']]);
     /* 弹在格子旁边：用格子的屏幕坐标 */
     var loc = Java.array('int', [0, 0]);
     try { BAG.tiles[slot].cell.getLocationOnScreen(loc); } catch (e) {}
@@ -1736,16 +1749,20 @@ var UI = (function () {
       var dm = act.getResources().getDisplayMetrics();
       sw = dm.widthPixels.value; sh = dm.heightPixels.value;
     } catch (e) {}
-    var boxW = dp(150), maxY = Math.max(0, sh - dp(260));
+    /* 贴着格子：默认放格子下方，下面放不下就翻到上方（之前固定预留 260dp 会把所有弹窗都夹到同一位置） */
+    var boxW = dp(168);
+    var boxH = (box.getChildCount() * dp(32)) + dp(18);        // 按行数估算（每行约 32dp）
     var x = Math.max(dp(4), Math.min(loc[0] + dp(50), sw - boxW - dp(4)));
-    var y = Math.max(dp(4), Math.min(loc[1] + dp(58), maxY));
+    var y = loc[1] + dp(58);
+    if (y + boxH > sh - dp(8)) y = Math.max(dp(4), loc[1] - boxH - dp(8));
+    y = Math.max(dp(4), Math.min(y, Math.max(dp(4), sh - boxH - dp(4))));
     var lp2 = FLP.$new(boxW, WRAP);
     lp2.leftMargin.value = Math.round(x); lp2.topMargin.value = Math.round(y);
     root.addView(box, lp2);
     K.bindClick(dim, function () { bagClosePopup(); });
     try { act.addContentView(root, FLP.$new(MATCH, MATCH)); } catch (e) { err('背包弹窗', e); }
     BAG.popup = { root: root, close: bagClosePopup };
-    log('背包：槽' + slot + ' 操作弹窗（位置 ' + Math.round(x) + ',' + Math.round(y) + '）');
+    log('背包：槽' + slot + ' 操作弹窗（格子@' + loc[0] + ',' + loc[1] + ' → 弹窗@' + Math.round(x) + ',' + Math.round(y) + '）');
   }
   function bagSlot() { return BAG.sel; }
   function bagItem() {

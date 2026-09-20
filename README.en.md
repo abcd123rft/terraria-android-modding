@@ -69,6 +69,14 @@ python3 ../tools/jshook.py exec --file terraria-mod-menu.js --sub "selfTest: fal
 
 ## Changelog (latest first)
 
+**v1.2.7**
+- New **"Remove summon count limit"** switch on the Misc page: raises both the **minion** (`maxMinions`) and
+  **sentry/turret** (`maxTurrets`) caps to 99 and keeps `slotsMinions` in sync, plus a button that reads the live
+  values back. Two measured gotchas, both now documented: those fields are **recomputed every frame from equipment**
+  (a one-shot write is reverted within 400 ms), so they must be written every frame; and since `Interceptor.onEnter`
+  runs before the target body, the write belongs in the per-frame hooks. Verified by attaching a `Player.ItemCheck`
+  probe — it reads **99** at the exact moment the game checks the summon limit.
+
 **v1.2.6**
 - Fixed the **bag page showing only the five section headers, no slots**: the new "prewarm" ran on the title screen
   (no active player yet, so the slot count read 0) and built five headers plus sixteen empty rows while still marking

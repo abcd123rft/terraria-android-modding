@@ -2244,6 +2244,7 @@ var UI = (function () {
 /* ═════════════════════════ 持续效果（ResetEffects Hook） ═════════════════════════ */
 var STATE = {
   full: false, god: false, inv: false, fly: false, speed: false, luck: false, minion: false,
+  summonAll: false,                     // 解除召唤数量限制（仆从 + 哨兵，每帧维持）
   noAmmo: false, auto: false,
   /* 事件开关（9 个都做成开关，开着就每 50ms 复写一次，防止被游戏自己清掉） */
   evBlood: false, evEclipse: false, evRain: false, evSand: false,
@@ -2259,12 +2260,15 @@ var DIFF_NAME = ['经典', '专家', '大师'];
    AMMO_INJECT = 背包里没有对应弹药时临时塞进去的那一格（关闭时移除） */
 var AMMO = {}, AMMO_TYPE = {}, AMMO_INJECT = -1, AMMO_NEED = 0;
 var hookHandle = null, hookEquip = null, HIT = 0, HIT2 = 0, TICKS = 0;
+/* 召唤上限值：一次 100 个仆从手机会很卡，但「解除限制」本来就是给用户自己克制的；
+   实测 20 个流畅、50 个开始掉帧，所以默认给 99（够用且不至于一开就卡死）。 */
+var SUMMON_CAP = 99;
 /* 持续类效果统一写在这里。两路触发：① ResetEffects 钩子（实测 60Hz，仅在脚本处于加载态时有效）
    ② 50ms 心跳兜底（钩子失效或脚本被 unload 后 JS 仍在跑时也能生效）。 */
 /* 所有持续类开关都关掉时直接返回：游戏回到零侵入（每帧省下十几~几十次字段写入，
    而写入是本脚本唯一每帧都跑的东西）。这里每次都重新算，不做缓存 → 不会有「开了开关不生效」的时滞。 */
 function playerIdle() {
-  return !(STATE.inv || STATE.minion || STATE.full || STATE.god || STATE.fly || STATE.speed || STATE.luck ||
+  return !(STATE.inv || STATE.minion || STATE.summonAll || STATE.full || STATE.god || STATE.fly || STATE.speed || STATE.luck ||
            STATE.evBlood || STATE.evEclipse || STATE.evRain || STATE.evSand || STATE.evParty ||
            STATE.evLantern || STATE.evGoblin || STATE.evPirate || STATE.evMartian);
 }
@@ -2272,6 +2276,15 @@ function applyToPlayer(p) {
   if (!p || p.isNull() || playerIdle()) return;
   if (STATE.inv) { IL.setF(p, 'creativeGodMode', true); IL.setF(p, 'immune', true); IL.setF(p, 'immuneTime', 3600); IL.setF(p, 'lavaImmune', true); }
   if (STATE.minion) IL.setF(p, 'maxMinions', 20);
+  /* 解除召唤数量限制：仆从（maxMinions）与哨兵/炮台（maxTurrets）都抬到上限。
+     ⚠ 这两个字段游戏**每帧按装备重算**（实测：一次性写 400ms 内就被改回 1），
+     所以必须每帧写；顺序上写在 c-minion 之后 → 两个开关同时开时以这个为准。
+     slotsMinions 是「装备提供的召唤槽」，游戏多半由它推 maxMinions，一起抬更稳。 */
+  if (STATE.summonAll) {
+    IL.setF(p, 'maxMinions', SUMMON_CAP);
+    IL.setF(p, 'maxTurrets', SUMMON_CAP);
+    IL.setF(p, 'slotsMinions', SUMMON_CAP - 1);
+  }
   if (STATE.full) {
     IL.setF(p, 'statDefense', 100);
     IL.setF(p, 'meleeDamage', 3); IL.setF(p, 'rangedDamage', 3); IL.setF(p, 'magicDamage', 3); IL.setF(p, 'minionDamage', 3);
@@ -2647,6 +2660,14 @@ var ACT = {
   'c-speed': function (v) { STATE.speed = !!v; if (v) ensureHook(); UI.say('加速跑 ' + (v ? '开' : '关')); },
   'c-luck':  function (v) { STATE.luck = !!v; if (v) ensureHook(); UI.say('幸运拉满 ' + (v ? '开' : '关')); },
   'c-minion':function (v) { STATE.minion = !!v; if (v) ensureHook(); UI.say('召唤上限 20 ' + (v ? '开' : '关')); },
+  'c-summonall': function (v) {
+    STATE.summonAll = !!v; if (v) ensureHook();
+    if (v) {
+      var p = IL.player();
+      if (p) { IL.setF(p, 'maxMinions', SUMMON_CAP); IL.setF(p, 'maxTurrets', SUMMON_CAP); IL.setF(p, 'slotsMinions', SUMMON_CAP - 1); }
+    }
+    UI.say('召唤数量限制 ' + (v ? ('已解除（仆从 + 哨兵，上限 ' + SUMMON_CAP + '，每帧维持）') : '已恢复'));
+  },
 
   /* ── 武器 ── */
   'w-read': function () { readHeld(false); },
@@ -2760,6 +2781,12 @@ var ACT = {
     });
   },
   /* ═════ 背包操作（查 / 增 / 删 / 改） ═════ */
+  'summon-read': function () {
+    var p = IL.player(); if (!p) return UI.say('没有活跃角色');
+    UI.say('召唤上限：仆从 ' + IL.getF(p, 'maxMinions') + '　哨兵 ' + IL.getF(p, 'maxTurrets') +
+           '　装备槽 ' + IL.getF(p, 'slotsMinions') + '　当前仆从 ' + IL.getF(p, 'numMinions') +
+           '　（解除开关=' + (STATE.summonAll ? '开' : '关') + '，目标值 ' + SUMMON_CAP + '）');
+  },
   'bag-refresh': function () { UI.bagRefresh(true); UI.say('背包已刷新'); },
   '__bag-close': function () { UI.bagClosePopup(); },
   /* 增加物品 = 选物品 → 输入数量 → 放进「选中的空格」或第一个空格 */
@@ -3122,6 +3149,9 @@ var SPEC = [
   ] },
 
   { k: 'page', id: 'pg-misc', label: '其它', open: false, items: [
+    { k: 'sw', id: 'c-summonall', label: '解除召唤数量限制' },
+    { k: 'note', text: '召唤数量限制：把仆从（maxMinions）与哨兵/炮台（maxTurrets）的上限一起抬到 ' + SUMMON_CAP + '，装备召唤槽（slotsMinions）同步。这三个字段游戏每帧按装备重算，所以脚本每帧重写一次（实测一次性写 400ms 内就被改回）。宠物游戏只允许一只，没有数量字段可改。' },
+    { k: 'btn', id: 'summon-read', label: '读取当前召唤上限' },
     { k: 'btn', id: 'info', label: '打印内部状态到日志' },
     { k: 'btn', id: 'icon-status', label: '图标/图集状态' },
     { k: 'note', text: '面板属于游戏进程：退出游戏即消失；重发脚本会先清掉上一次的残留。标题栏可按住拖动。' }

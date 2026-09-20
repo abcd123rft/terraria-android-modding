@@ -134,6 +134,14 @@ Update → UpdateSocialShadow → UpdateImmunity → ResetEffects → UpdateBuff
 
 ### 4.2 心跳（50ms setInterval）
 适合：状态类字段的复写（天气）、背包扫描（无子弹发射）、时间条同步、手持武器轮询。
+
+**性能上真正要盯的两件事**（实测 2026-09-20）：
+1. **一次 Java 调用 ≈ 0.13–0.28ms** —— 界面重复创建才是卡顿主因（重建 120 个 View = 100ms+）。
+   弹层/列表/键盘一律「建一次复用」；`setText`/`setBackground`/`isChecked` 全部做「值没变就不碰 View」，
+   去重标记记在 **View 自己身上**（`v.__txt`），别记在按 id 的模块级 map（面板重挂后会误判成已设置）。
+2. **字段访问别每次进 il2cpp**（2–4µs/次）—— 用 `il2cpp_field_get_offset` 取偏移后
+   `p.add(off).writeFloat(v)` 直读直写（1.4µs，零 il2cpp 调用）；每个字段**首次**直读时用官方 API 对拍一次，
+   不一致就永久退回慢路径。负缓存必须用 `ck in cache` 判断（`if (cache[ck])` 对 null/false 永远判假）。
 重活（网络、批量裁图）**不要放主线程**：主线程做网络会抛 `android.os.NetworkOnMainThreadException`，
 放到 `setTimeout`（Frida 脚本线程）里做。
 

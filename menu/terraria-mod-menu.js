@@ -37,6 +37,8 @@ var CFG = {
   tickMs: 50,                       // 后台心跳：锁时间 / 补弹药
   pollMs: 350,                      // 手持武器种类轮询
   selfTest: false,                  // true = 挂载后自动跑一遍自检并写日志（调试用）
+  prof: false,                      // true = 打印界面构建/列表计算的耗时（排查卡顿用，运行时可改：TERRARIA_SYS_MENU.cfg.prof = true）
+  prewarm: true,                    // true = 挂载后空闲时预建物品面板（首次打开不再等 ~150ms 构建）
   logPrefix: '[系统菜单]'
 };
 /* ── 物品分类表：第 i 个字符 = ID(i+1) 的类别码（字符 '0' + 类别序号）；' ' = 该 ID 是空号 ──
@@ -112,6 +114,7 @@ var ITEM_NAMES = [
    弹药格只列出这些，钱币格只列钱币。游戏更新加了新弹药的话，重跑生成脚本即可。 */
 var BAG_FILTER = { ammo: "23,27,40-41,47,51,71-75,97,169,234,265,278,283,353,370,408,515-516,545-546,771-774,780-784,931,949,988,1179,1235,1246,1261,1302,1310,1334-1335,1341-1342,1349-1352,1614,1783,1785,1836,3003,3009-3011,3103-3104,3108,3567-3568,4445-4449,4457-4459,4915,5348,5377-5380,5392-5394", coin: "71-74" };
 
+function prof(tag, t0) { if (CFG.prof) log('[耗时] ' + tag + ' = ' + (Date.now() - t0) + 'ms'); }
 function log() { try { console.log(CFG.logPrefix + ' ' + Array.prototype.join.call(arguments, ' ')); } catch (e) {} }
 function err(where, e) { log(where + ' 失败：' + e + (e && e.stack ? '\n' + e.stack : '')); }
 
@@ -140,10 +143,15 @@ function bagRangeHit(kind, id) {
   return false;
 }
 
+var RT_NAMES = {};          // 运行时问游戏拿到的名字（含「查过但没有」的负结果）
+var NAME_LOW = {};          // 搜索用的小写名（惰性生成，免得每次按键做 6266 次 toLowerCase）
 function itemNameFast(id) {
   var nm = NAMES.get(id);
-  if (!nm) { try { nm = IL.itemName(id) || ''; } catch (e) {} }   // 名表没收录 → 兜底问游戏
-  return nm;
+  if (nm) return nm;
+  if (RT_NAMES[id] !== undefined) return RT_NAMES[id];            // 问过一次就不再问（含空结果）
+  var v = ''; try { v = IL.itemName(id) || ''; } catch (e) {}     // 名表没收录 → 兜底问游戏
+  RT_NAMES[id] = v;
+  return v;
 }
 
 /* ═════════════════════════ il2cpp 工具层 ═════════════════════════ */
@@ -161,6 +169,7 @@ var IL = (function () {
     class_get_field_from_name: F('il2cpp_class_get_field_from_name', 'pointer', ['pointer', 'pointer']),
     class_get_method_from_name: F('il2cpp_class_get_method_from_name', 'pointer', ['pointer', 'pointer', 'int']),
     field_get_type: F('il2cpp_field_get_type', 'pointer', ['pointer']),
+    field_get_offset: F('il2cpp_field_get_offset', 'uint', ['pointer']),
     type_get_name: F('il2cpp_type_get_name', 'pointer', ['pointer']),
     field_get_value: F('il2cpp_field_get_value', 'void', ['pointer', 'pointer', 'pointer']),
     field_set_value: F('il2cpp_field_set_value', 'void', ['pointer', 'pointer', 'pointer']),
@@ -221,46 +230,180 @@ var IL = (function () {
     else if (t === 'System.Int16') b.writeS16(v);
     else b.writeS32(v | 0);
   }
+  /* ═════ 字段「指针 + 偏移」直读直写（性能核心） ═════
+     il2cpp_field_get_value/set_value 每次 2–4µs；而每帧有两个钩子各写十几个 Player 字段、
+     背包每秒扫 59 格 ×3 个字段。IL2CPP 的实例字段就是「对象指针 + FieldInfo.offset」，
+     偏移缓存住之后直接读写内存（约 0.05µs，快 50 倍以上），完全不进 il2cpp。
+     安全网：每个字段**第一次**访问时用官方 API 读一遍对拍，不一致就永久退回慢路径并写日志。
+     只对 Player / Item 这两个实例类生效；Main/Sandstorm 等静态类仍走官方 API。 */
+  var KIND = { 'System.Int32': 1, 'System.UInt32': 9, 'System.Single': 2, 'System.Double': 3,
+               'System.Boolean': 4, 'System.Byte': 5, 'System.SByte': 6, 'System.Int16': 7,
+               'System.String': 8 };
+  var FD = { P: {}, I: {} };                 // 字段名 → { off, k }；null = 必须走慢路径
+  var WBUF = Memory.alloc(8);                // 慢路径统一写缓冲（原先每次 Memory.alloc(8)）
+  var SLOW_N = 0, FAST_N = 0;                // 统计：走慢路径/快路径的次数（自检用）
+  function kindOf(t) {
+    var k = KIND[t];
+    if (k !== undefined) return k;
+    if (t && t.length > 2 && t.slice(-2) === '[]') return 8;    // 数组引用：可直读，不直写
+    return 0;
+  }
+  function rdK(k, q) {
+    switch (k) {
+      case 1: return q.readS32();
+      case 2: return Math.round(q.readFloat() * 10000) / 10000;
+      case 3: return Math.round(q.readDouble() * 10000) / 10000;
+      case 4: return q.readU8() !== 0;
+      case 5: return q.readU8();
+      case 6: return q.readS8();
+      case 7: return q.readS16();
+      case 8: return q.readPointer();
+      case 9: return q.readU32();
+    }
+    return undefined;
+  }
+  function wrK(k, q, v) {
+    switch (k) {
+      case 1: q.writeS32(v | 0); return true;
+      case 2: q.writeFloat(v); return true;
+      case 3: q.writeDouble(v); return true;
+      case 4: q.writeU8(v ? 1 : 0); return true;
+      case 5: q.writeU8(v & 0xff); return true;
+      case 6: q.writeS8(v); return true;
+      case 7: q.writeS16(v); return true;
+      case 9: q.writeU32(v >>> 0); return true;
+    }
+    return false;                            // 引用类型不直写（要过 GC 写屏障）
+  }
+  function sameVal(k, a, b) {
+    if (k !== 8) return a === b;
+    var an = !a || (a.isNull && a.isNull()), bn = !b || (b.isNull && b.isNull());
+    if (an || bn) return an === bn;
+    try { return a.equals(b); } catch (e) { return String(a) === String(b); }
+  }
+  /* 解析字段偏移并**对拍一次**；obj 必须是该类的一个真实实例 */
+  function resolveField(cls_, nm, obj, cache) {
+    try {
+      if (!obj || obj.isNull()) return null;
+      var f = il.class_get_field_from_name(cls_, Memory.allocUtf8String(nm));
+      if (f.isNull()) { cache[nm] = null; return null; }
+      var k = kindOf(tn(f));
+      if (!k) { cache[nm] = null; return null; }
+      var off = il.field_get_offset(f);
+      if (!off) { cache[nm] = null; return null; }
+      il.field_get_value(obj, f, buf);
+      var slow = rdK(k, buf), fastv = rdK(k, obj.add(off));
+      if (!sameVal(k, slow, fastv)) {
+        log('字段直读校验不一致：' + nm + '（API=' + slow + ' 直读=' + fastv + '）→ 退回慢路径');
+        cache[nm] = null; return null;
+      }
+      var d = { off: off, k: k };
+      cache[nm] = d;
+      return d;
+    } catch (e) { cache[nm] = null; return null; }
+  }
+  var PACT = -1, PACT_TRIED = false;
+
   function player() {
     il.field_static_get_value(fI(Main, 'player'), buf);
     var arr = buf.readPointer();
-    var act = fI(Player, 'active');
-    for (var i = 0; i < arr.add(0x18).readS32(); i++) {
+    if (arr.isNull()) return null;
+    var act = null, n = arr.add(0x18).readS32();
+    for (var i = 0; i < n; i++) {
       var p = arr.add(0x20 + i * Process.pointerSize).readPointer();
       if (p.isNull()) continue;
+      if (!PACT_TRIED) { PACT_TRIED = true; var d0 = resolveField(Player, 'active', p, FD.P); PACT = d0 ? d0.off : -1; }
+      if (PACT >= 0) { if (p.add(PACT).readU8() !== 0) return p; continue; }
+      if (!act) act = fI(Player, 'active');
       il.field_get_value(p, act, buf);
       if (buf.readU8() !== 0) return p;
     }
     return null;
   }
   /* getF/setF 是 Player 专用（历史语义，别改）；其它类用 getOn/setOn */
-  function getF(p, nm) { var f = fICached(Player, nm); if (f.isNull()) return undefined; CUR = p; return readInto(f, buf); }
-  function getOn(cls_, obj, nm) { var f = fI(cls_, nm); if (f.isNull()) return undefined; CUR = obj; return readInto(f, buf); }
-  function setOn(cls_, obj, nm, v) {
-    var f = fI(cls_, nm); if (f.isNull()) { log('无字段 ' + nm); return false; }
-    var b = Memory.alloc(8); writeInto(f, b, v); il.field_set_value(obj, f, b); return true;
+  /* 取（可选的）快路径描述符：只对 Player / Item 生效 */
+  function fastDesc(cls_, obj, nm) {
+    var c = (cls_ === Player) ? FD.P : (cls_ === Item) ? FD.I : null;
+    if (!c) return null;
+    var d = c[nm];
+    if (d === undefined) return resolveField(cls_, nm, obj, c);
+    return d;
   }
-  function setF(p, nm, v) { return setOnCached(Player, p, nm, v); }
+  function getF(p, nm) {
+    var d = fastDesc(Player, p, nm);
+    if (d) { FAST_N++; return rdK(d.k, p.add(d.off)); }
+    SLOW_N++;
+    var f = fICached(Player, nm); if (f.isNull()) return undefined; CUR = p; return readInto(f, buf);
+  }
+  function getOn(cls_, obj, nm) {
+    var d = fastDesc(cls_, obj, nm);
+    if (d) { FAST_N++; return rdK(d.k, obj.add(d.off)); }
+    SLOW_N++;
+    var f = fI(cls_, nm); if (f.isNull()) return undefined; CUR = obj; return readInto(f, buf);
+  }
+  function setOn(cls_, obj, nm, v) {
+    var d = fastDesc(cls_, obj, nm);
+    if (d) { FAST_N++; if (wrK(d.k, obj.add(d.off), v)) return true; }
+    SLOW_N++;
+    var f = fI(cls_, nm); if (f.isNull()) { log('无字段 ' + nm); return false; }
+    writeInto(f, WBUF, v); il.field_set_value(obj, f, WBUF); return true;
+  }
+  function setF(p, nm, v) {
+    var d = fastDesc(Player, p, nm);
+    if (d) { FAST_N++; if (wrK(d.k, p.add(d.off), v)) return true; }
+    return setOnCached(Player, p, nm, v);
+  }
   function setOnCached(cls_, obj, nm, v) {
+    SLOW_N++;
     var f = fICached(cls_, nm); if (f.isNull()) { log('无字段 ' + nm); return false; }
-    var b = Memory.alloc(8); writeInto(f, b, v); il.field_set_value(obj, f, b); return true;
+    writeInto(f, WBUF, v); il.field_set_value(obj, f, WBUF); return true;
   }
   function getS(cls_, nm) {
-    var f = fICached(cls_, nm); if (f.isNull()) return undefined;
-    il.field_static_get_value(f, buf);
-    var t = tn(f);
+    var d = scField(cls_, nm); if (!d) return undefined;
+    il.field_static_get_value(d.f, buf);
+    if (d.k) return rdK(d.k, buf);
+    var t = tn(d.f);
     if (t === 'System.Double') return Math.round(buf.readDouble() * 10000) / 10000;
     if (t === 'System.Single') return Math.round(buf.readFloat() * 10000) / 10000;
     if (t === 'System.Boolean') return buf.readU8() !== 0;
     if (t === 'System.Byte') return buf.readU8();
+    if (t === 'System.String') return buf.readPointer();
     return buf.readS32();
   }
+  /* 静态字段（Main/Sandstorm/Party/Lantern）描述符缓存：心跳每 50ms 都在读 Main.time/raining 等 */
+  var SC_MAP = {}, SC_CLS = null, SC_CUR = null;
+  function scMap(cls_) {
+    if (cls_ === SC_CLS && SC_CUR) return SC_CUR;
+    var k = cls_.toString();
+    SC_CLS = cls_; SC_CUR = SC_MAP[k] || (SC_MAP[k] = {});
+    return SC_CUR;
+  }
+  function scField(cls_, nm) {
+    var m = scMap(cls_), d = m[nm];
+    if (d === undefined) {
+      var f = il.class_get_field_from_name(cls_, Memory.allocUtf8String(nm));
+      if (f.isNull()) { m[nm] = d = null; return d; }
+      var k = kindOf(tn(f));                        // 类型只在第一次解析时查一次
+      m[nm] = d = (k && k !== 8) ? { f: f, k: k } : { f: f, k: 0 };   // k=0 → 复杂类型走旧逻辑
+    }
+    return d;
+  }
   function setS(cls_, nm, v) {
-    var f = fICached(cls_, nm); if (f.isNull()) { log('无静态字段 ' + nm); return false; }
-    var b = Memory.alloc(8); writeInto(f, b, v); il.field_static_set_value(f, b); return true;
+    var d = scField(cls_, nm); if (!d) { log('无静态字段 ' + nm); return false; }
+    if (d.k) { wrK(d.k, WBUF, v); il.field_static_set_value(d.f, WBUF); return true; }
+    writeInto(d.f, WBUF, v); il.field_static_set_value(d.f, WBUF); return true;
+  }
+  /* 方法指针缓存：类包装对象不变时命中的是同一个 map（1 级内联缓存，避免 toString 拼 key） */
+  var MC_CLS = null, MC_MAP = null;
+  function mcache(cls_) {
+    if (cls_ === MC_CLS && MC_MAP) return MC_MAP;
+    MC_CLS = cls_; MC_MAP = {};
+    return MC_MAP;
   }
   function call(obj, cls_, nm, args) {
-    var mi = il.class_get_method_from_name(cls_, Memory.allocUtf8String(nm), args ? args.length : 0);
+    var argc = args ? args.length : 0, mk = nm + '/' + argc, mm = mcache(cls_);
+    var mi = mm[mk];
+    if (mi === undefined) mi = mm[mk] = il.class_get_method_from_name(cls_, Memory.allocUtf8String(nm), argc);
     if (mi.isNull()) { log('无方法 ' + nm + '/' + (args ? args.length : 0)); return null; }
     var argv = null;
     if (args && args.length) {
@@ -282,13 +425,15 @@ var IL = (function () {
   }
   /* 运行时读「游戏当前有多少种物品」（TextureAssets.Item 数组长度）——
      游戏更新加了新物品时，靠它把新 ID 也纳入列表（名字走运行时兜底，图标没有就显示 ID） */
+  var TA_CLS = null;
+  function texAssets() { if (!TA_CLS) TA_CLS = cls('Terraria.GameContent', 'TextureAssets'); return TA_CLS; }
   function itemCount() {
     try {
-      var arr = getS(cls('Terraria.GameContent', 'TextureAssets'), 'Item');
+      var arr = getS(texAssets(), 'Item');
       if (arr && typeof arr === 'object') return arr.add(0x18).readS32();
     } catch (e) {}
     try {
-      var f = fI(cls('Terraria.GameContent', 'TextureAssets'), 'Item');
+      var f = fI(texAssets(), 'Item');
       if (f.isNull()) return 0;
       var b = Memory.alloc(8);
       il.field_static_get_value(f, b);
@@ -311,7 +456,12 @@ var IL = (function () {
   function boolArg(v) { var b = Memory.alloc(1); b.writeU8(v ? 1 : 0); return b; }
 
   /* ── 背包 ── */
-  function invArr(p) { il.field_get_value(p, fI(Player, 'inventory'), buf); return buf.readPointer(); }
+  function invArr(p) {
+    var d = fastDesc(Player, p, 'inventory');
+    if (d) { FAST_N++; return p.add(d.off).readPointer(); }
+    SLOW_N++;
+    il.field_get_value(p, fI(Player, 'inventory'), buf); return buf.readPointer();
+  }
   function slotItem(arr, i) { return arr.add(0x20 + i * Process.pointerSize).readPointer(); }
   function held(p) {
     var arr = invArr(p), idx = getF(p, 'lastHotbarItem');
@@ -373,6 +523,7 @@ var IL = (function () {
     call: call, itemName: itemName, invArr: invArr, slotItem: slotItem, held: held,
     weaponKind: weaponKind, giveItem: giveItem, topUpAmmo: topUpAmmo,
     intArg: intArg, boolArg: boolArg,
+    perf: function () { return { fast: FAST_N, slow: SLOW_N, fields: Object.keys(FD.P).length + Object.keys(FD.I).length }; },
     /* 回调线程都要在 il2cpp 里挂过；本版回调跑在 App 主线程（= Unity 主线程），这行是兜底 */
     attach: function () { try { il.thread_attach(dom); } catch (e) {} } };
 })();
@@ -383,11 +534,26 @@ function catOf(id) {
   var k = CAT_MAP.charCodeAt(id - 1) - 48;
   return (k >= 0 && k < CAT_NAMES.length) ? k : -1;
 }
-function idsOfCat(k) {
-  var out = [];
-  for (var i = 0; i < CAT_MAP.length; i++) if (CAT_MAP.charCodeAt(i) - 48 === k) out.push(i + 1);
-  return out;
+/* 分类 → id 列表：**一次遍历建全部 20 个分类**并常驻缓存。
+   原来 idsOfCat(k) 每次都把 6266 字符的 CAT_MAP 扫一遍，物品面板每次打开要建 ~20 个分类 chips
+   → 每次白扫 12 万次；现在整个会话只扫一遍。 */
+var CAT_IDS = null;
+function catIdsAll() {
+  if (CAT_IDS) return CAT_IDS;
+  var t0 = Date.now(), t = [];
+  for (var k = 0; k < CAT_NAMES.length; k++) t.push([]);
+  for (var i = 0; i < CAT_MAP.length; i++) {
+    var kk = CAT_MAP.charCodeAt(i) - 48;
+    if (kk >= 0 && kk < t.length) t[kk].push(i + 1);
+  }
+  CAT_IDS = t;
+  prof('分类表一次性建表（' + CAT_MAP.length + ' 字符 → ' + CAT_NAMES.length + ' 类）', t0);
+  return t;
 }
+function idsOfCat(k) { var t = catIdsAll(); return (k >= 0 && k < t.length) ? t[k] : []; }
+
+/* 「全部物品」列表：整个会话只算一次（游戏运行期间物品表不会变） */
+var ALL_IDS = null;
 
 /* ═════════════════════════ 物品图标（从安装包解出的图集里裁剪） ═════════════════════════
    图标来源：安装包内两张 2048×2048 图集（离线解出，见 物品图标/README.md）。
@@ -425,12 +591,17 @@ var ICON = (function () {
     if (!w || !h) return null;
     return { a: vi(p), x: vi(p + 1) * 64 + vi(p + 2), y: vi(p + 3) * 64 + vi(p + 4), w: w, h: h };
   }
+  /* 这几个 Java 类句柄 + 缓存目录字符串只解析一次（原来每次取图标都要走一遍 Java 调用链） */
+  var J_BF = null, J_BMP = null, J_MTX = null, CACHE_DIR = null, PATH_C = [null, null];
+  function bf() { if (!J_BF) J_BF = Java.use('android.graphics.BitmapFactory'); return J_BF; }
   function cachePath(n) {
-    try {
-      var ctx = Java.use('android.app.ActivityThread').currentApplication();
-      var dir = ctx.getCacheDir().getAbsolutePath();
-      return dir + '/dsha_atlas_' + n + '.png';
-    } catch (e) { return null; }
+    if (PATH_C[n]) return PATH_C[n];
+    if (CACHE_DIR === null || CACHE_DIR === '') {
+      try { CACHE_DIR = Java.use('android.app.ActivityThread').currentApplication().getCacheDir().getAbsolutePath(); }
+      catch (e) { CACHE_DIR = ''; }
+    }
+    if (!CACHE_DIR) return null;                       // 这次拿不到就下次再试，不缓存失败结果
+    return (PATH_C[n] = CACHE_DIR + '/dsha_atlas_' + n + '.png');
   }
   /* 预热：在**后台（Frida 脚本线程）**把两张图集下载到游戏私有缓存。
      不能放在 page() 里做：page() 是主线程调用的（点开弹层时建格子），
@@ -445,7 +616,7 @@ var ICON = (function () {
           try {
             var cp = cachePath(n);
             if (!cp) { warming[n] = false; return; }
-            var BF = Java.use('android.graphics.BitmapFactory');
+            var BF = bf();
             if (!force) {                       // 已经有缓存就什么都不用做
               var old = BF.decodeFile(cp);
               if (old) { old.recycle(); how[n] = '私有缓存'; warming[n] = false; return; }
@@ -470,9 +641,14 @@ var ICON = (function () {
     }
   }
   /* 取图集位图：只做**主线程安全**的本地读取；网络由 warm() 在后台负责 */
+  var pageTry = [0, 0];
   function page(n) {
     if (pages[n]) return pages[n];
-    var BF = Java.use('android.graphics.BitmapFactory'), bmp = null, src = '';
+    /* 图集拿不到时（没网又没缓存）别每格都去 decode：5 秒内只试一次，之后仍会重试 */
+    var nowT = Date.now();
+    if (nowT - pageTry[n] < 5000) return null;
+    pageTry[n] = nowT;
+    var BF = bf(), bmp = null, src = '';
     var cp = cachePath(n);
     if (cp) { try { bmp = BF.decodeFile(cp); if (bmp) src = '私有缓存'; } catch (e) {} }
     if (!bmp) { try { bmp = BF.decodeFile(DIR + n + '.png'); if (bmp) src = '文件'; } catch (e) {} }
@@ -484,17 +660,22 @@ var ICON = (function () {
   /* 取图标位图（最长边约 px，保持比例、最近邻放大）；拿不到返回 null */
   function bitmap(id, px) {
     var ck = id + '@' + px;
-    if (cache[ck]) return cache[ck];
-    var r = rect(id); if (!r) return null;
-    var src = page(r.a); if (!src) return null;
+    /* ⚠ 负结果也要缓存：以前 cache[ck]=null 时 `if (cache[ck])` 判假 → 每次填格都重跑一遍
+       裁剪/解码（图集不可用时一屏就是上百次 Java 调用）。'in' 判断才能命中负缓存。 */
+    if (ck in cache) return cache[ck] || null;
+    var r = rect(id);
+    if (!r) { cache[ck] = false; return null; }        // 该 ID 本来就没有图标 → 永久负缓存
+    var src = page(r.a); if (!src) return null;        // 图集还没就绪 → 不缓存（以后可能就有）
     var out = null;
     try {
-      var B = Java.use('android.graphics.Bitmap');
+      if (!J_BMP) J_BMP = Java.use('android.graphics.Bitmap');
+      var B = J_BMP;
       var sx = r.x, sy = ATLAS_H - r.y - r.h;
       var f = px / Math.max(r.w, r.h);
       if (f > 1.02 || f < 0.98) {
         /* 裁剪 + 放大一次做完（以前是 createBitmap 再 createScaledBitmap，两次分配两次 JNI 调用） */
-        var M = Java.use('android.graphics.Matrix').$new();
+        if (!J_MTX) J_MTX = Java.use('android.graphics.Matrix');
+        var M = J_MTX.$new();
         M.setScale(f, f);
         out = B.createBitmap.overload('android.graphics.Bitmap', 'int', 'int', 'int', 'int',
                                       'android.graphics.Matrix', 'boolean')
@@ -504,8 +685,8 @@ var ICON = (function () {
                 .call(B, src, sx, sy, r.w, r.h);
       }
     } catch (e) { log('图标：裁剪物品 ' + id + ' 失败：' + e); }
-    cache[ck] = out; order.push(ck);
-    while (order.length > CACHE_MAX) { var k = order.shift(); delete cache[k]; }
+    cache[ck] = out || false;
+    if (out) { order.push(ck); while (order.length > CACHE_MAX) { var k = order.shift(); delete cache[k]; } }
     return out;
   }
   function ready() { return !!(pages[0] || pages[1]); }
@@ -575,7 +756,8 @@ var UI = (function () {
     btn:   argb(0xFF, 0x1B, 0x24, 0x2E)
   };
   function argb(a, r, g, b) { return ((a << 24) | (r << 16) | (g << 8) | b) | 0; }
-  function jStr(s) { return Java.use('java.lang.String').$new(String(s)); }
+  var JSTR = null;
+  function jStr(s) { if (!JSTR) JSTR = Java.use('java.lang.String'); return JSTR.$new(String(s)); }
   function uniq(p) { SEQ++; return 'com.dsha.terraria.' + p + '_' + Date.now().toString(36) + '_' + SEQ; }
   /* 当前是不是 App 主线程。Android 主线程的 tid 等于进程 pid。 */
   function isMainThread() { try { return Process.getCurrentThreadId() === Process.id; } catch (e) { return false; } }
@@ -591,12 +773,17 @@ var UI = (function () {
   /* 状态栏回显：本移植版 Main.NewText 抛异常用不了，面板状态栏就是唯一的用户反馈通道 */
   function say(msg) {
     msg = String(msg);
-    log(msg);
+    log(msg);                                        // 日志照写（去重只针对 UI，不影响排查）
     if (!S.status) return;
+    if (S.status.__txt === msg) return;              // 同一句话不重复 setText（记在 View 上，重挂面板后自动失效）
+    S.status.__txt = msg;
     onMain(function () { try { S.status.setText(jStr(msg)); } catch (e) {} });
   }
   function setLabel(id, text) {
     var v = S.labels[id]; if (!v) return;
+    text = String(text);
+    if (v.__txt === text) return;                    // 文本没变 → 不碰 View（省掉 measure/layout）
+    v.__txt = text;
     onMain(function () { try { v.setText(jStr(text)); } catch (e) {} });
   }
   /* 给 iconrow 节点换图标（传 null 就是清空）；位图由 ICON.bitmap() 裁好传进来 */
@@ -611,19 +798,32 @@ var UI = (function () {
   }
   function setVisible(id, on) {
     var v = S.groups[id]; if (!v) return;
-    onMain(function () { try { v.setVisibility(on ? 0 : 8); } catch (e) {} });
+    var want = on ? 0 : 8;
+    if (v.__vis === want) return;                    // 状态一致就别再 setVisibility
+    v.__vis = want;
+    onMain(function () { try { v.setVisibility(want); } catch (e) {} });
   }
   function setSwitch(id, on) {
     var v = S.switches[id]; if (!v) return;
     onMain(function () {
-      try { S.suppress = true; v.setChecked(!!on); } catch (e) {} finally { S.suppress = false; }
+      try {
+        if (v.isChecked() === !!on) return;          // 状态一致就别碰（省一次重绘）
+        S.suppress = true; v.setChecked(!!on);
+      } catch (e) {} finally { S.suppress = false; }
     });
   }
   function setSeek(id, val) {
     var s = S.seeks[id]; if (!s) return;
+    /* 时间条每秒会被同步 20 次，而 86400 单位映射到几百像素 → 按 1/400 量化，
+       视觉上完全一样，但 View 刷新次数从 20 次/秒降到几乎为 0。 */
+    var q = Math.round(val);
+    var step = Math.max(1, Math.round((s.max - s.min) / 400));
+    var qq = Math.round(q / step) * step;
+    if (s.lastQ === qq) return;
+    s.lastQ = qq;
     onMain(function () {
-      try { s.bar.setProgress(Math.round(val) - s.min); } catch (e) {}
-      try { s.label.setText(jStr(s.name + '：' + Math.round(val))); } catch (e) {}
+      try { s.bar.setProgress(q - s.min); } catch (e) {}
+      try { s.label.setText(jStr(s.name + '：' + q)); } catch (e) {}
     });
   }
 
@@ -826,21 +1026,28 @@ var UI = (function () {
       function paintTabs() {
         for (var id in tabBtns) {
           var on = (S.activePage === id);
+          if (tabBtns[id].__on === on) continue;     // 只有「离开的那个 + 进入的这个」需要重画
+          tabBtns[id].__on = on;
           try { tabBtns[id].setTextColor(on ? C.title : C.sub); } catch (e) {}
           try { tabBtns[id].setBackground(on ? flatOn(C.btn) : flat(C.btn)); } catch (e) {}
         }
       }
       function showPage(id) {
         if (!S.pages[id]) return;
+        var t0 = Date.now();
         S.activePage = id;
         for (var k in S.pages) { try { S.pages[k].setVisibility(k === id ? VISIBLE : GONE); } catch (e) {} }
-        paintTabs();
+        prof('    切页·显隐 ' + id, t0);
+        var t1 = Date.now(); paintTabs(); prof('    切页·标签上色', t1);
         onMain(function () {
           try { UI.bagClosePopup(); } catch (e) {}
-          fitScroll();
+          var t2 = Date.now(); fitScroll(); prof('    切页·fitScroll', t2);
+          var t3 = Date.now();
           /* 进页时自动做一次「读当前状态」：角色→读属性、武器→读武器、时间→同步时间条 */
           try { if (typeof onPageEnter === 'function') onPageEnter(id); } catch (e) { err('进页钩子', e); }
+          prof('    切页·进页钩子 ' + id, t3);
         });
+        prof('  切页合计 ' + id, t0);
       }
       S.showPage = showPage;      // 暴露给模块级导出（自检/调试要切页）
       var pageDefs = [];
@@ -1133,7 +1340,9 @@ var UI = (function () {
   /* ═════════ 弹层：分类选物品 + 数字键盘 ═════════
      都是挂在同一个窗口里的浮层（addContentView 后加的在上层），触摸由自己消费。
      **不弹系统输入法**：游戏窗口里 IME 行为不可靠，数字改成面板内置键盘输入。 */
-  function overlay(titleText) {
+  /* persistent=true：关闭时只 setVisibility(GONE) 并保留视图树，下次直接 show() 复用。
+     物品面板有 120+ 个 Java 视图，每次打开重建要 110ms+，复用后只剩状态重置+列表重算。 */
+  function overlay(titleText, persistent) {
     var K = S.ctx;
     if (!K) { log('面板未就绪，弹层不可用'); return null; }
     var juse = K.juse, act = K.act, dp = K.dp, WRAP = -2, MATCH = -1;
@@ -1173,6 +1382,12 @@ var UI = (function () {
     }
     function close() {
       try {
+        if (persistent) {                       // 常驻弹层：只隐藏，视图树留着下次用
+          root.setVisibility(8);
+          var k2 = OVL.indexOf(close); if (k2 >= 0) OVL.splice(k2, 1);
+          log('弹层已隐藏：' + titleText);
+          return;
+        }
         /* 和面板的 close() 一样：必须用记下来的 content FrameLayout（ViewGroup 包装）移除，
            root.getParent() 返回的是 ViewParent 包装，实测调 removeView 报 not a function → 弹层关不掉 */
         var par = S.parent;
@@ -1184,25 +1399,39 @@ var UI = (function () {
     }
     /* 同屏只留一个弹层：新弹层打开前把旧的都关掉，
        否则反复点「选择物品」会一层层叠起来（上层挡住下层、关的时候也容易留残影）。 */
-    closeOverlays();
-    OVL.push(close);
+    function show() {
+      closeOverlays();
+      OVL.push(close);
+      root.setVisibility(0);
+    }
     K.bindClick(x, close);
     var flp = FLP.$new(K.widthPx, WRAP);
     flp.gravity.value = GR.TOP.value | GR.START.value;
     flp.leftMargin.value = Math.round(K.posX()); flp.topMargin.value = Math.round(K.posY());
-    act.addContentView(root, flp);
-    log('弹层已打开：' + titleText);
-    return { root: root, body: body, title: ttl, close: close, scroll: scroll, fit: fit };
+    if (persistent) {
+      act.addContentView(root, flp);
+      root.setVisibility(8);                    // 先挂上但不可见，等调用方 show()
+    } else {
+      closeOverlays();
+      OVL.push(close);
+      act.addContentView(root, flp);
+      log('弹层已打开：' + titleText);
+    }
+    return { root: root, body: body, title: ttl, close: close, scroll: scroll, fit: fit, show: show };
   }
 
   /* 数字键盘：标题 / 初值 / 回调（避免在游戏窗口里弹 IME） */
+  var PAD = { open: null };              // 数字键盘也复用（每次重建 20 个按钮 ≈ 27ms）
   function promptNumber(title, initial, onOk) {
+    if (PAD.open) { PAD.open(title, initial, onOk); return; }
     var K = S.ctx; if (!K) return;
-    var o = overlay(title); if (!o) return;
+    var o = overlay(title, true); if (!o) return;
+    var okCb = onOk;
     var juse = K.juse, act = K.act, dp = K.dp, WRAP = -2, MATCH = -1;
     var LL = juse('android.widget.LinearLayout'), TV = juse('android.widget.TextView'),
         BT = juse('android.widget.Button'), LLP = juse('android.widget.LinearLayout$LayoutParams'), GR = juse('android.view.Gravity');
     var buf = String(initial === undefined || initial === null ? '' : initial);
+    var initBuf = buf;
     var show = TV.$new(act); show.setTextSize(22); show.setTextColor(C.text);
     show.setGravity(GR.CENTER.value); show.setPadding(dp(6), dp(6), dp(6), dp(10));
     function refresh() { show.setText(jStr(buf === '' ? '（点下面的数字）' : buf)); }
@@ -1231,20 +1460,55 @@ var UI = (function () {
       o.body.addView(row);
     }
     var okRow = LL.$new(act); okRow.setOrientation(0); okRow.setLayoutParams(LLP.$new(MATCH, WRAP));
-    var ok = mk('确定', function () { var v = parseInt(buf, 10); if (isNaN(v)) v = 0; onOk(v); o.close(); });
+    var ok = mk('确定', function () { var v = parseInt(buf, 10); if (isNaN(v)) v = 0; okCb(v); o.close(); });
     var cancel = mk('取消', function () { o.close(); });
     var l1 = LLP.$new(0, WRAP, 1.0), l2 = LLP.$new(0, WRAP, 1.0); l2.leftMargin.value = dp(3);
     ok.setLayoutParams(l1); cancel.setLayoutParams(l2);
     okRow.addView(ok); okRow.addView(cancel);
     o.body.addView(okRow);
     try { o.fit(); } catch (e) {}          // 键盘整块按内容给高度，别让下面几排被裁掉
+    /* 复用入口：换标题/初值/回调 → 重新量高度 → 显示 */
+    PAD.open = function (nextTitle, nextInitial, nextCb) {
+      var t0 = Date.now();
+      okCb = nextCb;
+      buf = String(nextInitial === undefined || nextInitial === null ? '' : nextInitial);
+      try { o.title.setText(jStr('☰ ' + nextTitle)); } catch (e) {}
+      refresh();
+      try { o.fit(); } catch (e) {}
+      try { o.show(); } catch (e) { err('显示数字键盘', e); }
+      prof('数字键盘复用打开', t0);
+    };
+    try { o.show(); } catch (e) {}         // 首次：常驻弹层挂上时是隐藏的，这里显式显示
   }
 
   /* 分类选物品：类别页 → 物品页（分页，每页 40 件）→ 点选回调 */
   /* startFilter: null | 'ammo' | 'coin' —— 从弹药格/钱币格点「放入」时只列对应物品 */
+  var PICK = { open: null, hide: null };   // 复用同一个物品面板（建一次，之后只 show + 重置状态）
+  /* 预热：挂载后空闲时把物品面板先建好（隐藏），第一次点「放入/添加物品」就是 0 延迟。
+     建完立刻隐藏，同一轮 JS 里完成 → 不会闪一下。 */
+  function prewarm() {
+    if (PICK.open || !S.ctx) return;
+    var t0 = Date.now();
+    try {
+      pickItem(function () {}, -1, null);
+      if (PICK.hide) PICK.hide();
+      prof('预热：物品面板已建好并隐藏', t0);
+      log('预热完成：物品面板已预建（首次打开不再等构建）');
+    } catch (e) { err('预热物品面板', e); }
+  }
+  /* 背包网格的首次构建 ≈ 220ms（59 格 × 5 个 View），同样挪到挂载后空闲时做，
+     免得用户第一次点「背包」标签时干等。 */
+  function prewarmBag() {
+    if (UI.bagDebug && S.groups['bag-grid'] && S.groups['bag-grid'].getChildCount() > 1) return;   // 已经建过
+    var t0 = Date.now();
+    try { UI.bagBuild(); prof('预热：背包网格已建好', t0); log('预热完成：背包网格已预建'); }
+    catch (e) { err('预热背包', e); }
+  }
   function pickItem(onPick, startCat, startFilter) {
+    if (PICK.open) { PICK.open(onPick, startCat, startFilter); return; }
     var K = S.ctx; if (!K) return;
-    var o = overlay('选择物品'); if (!o) return;
+    var o = overlay('选择物品', true); if (!o) return;
+    var cb = onPick;                    // 回调每次打开都可能变，放闭包变量里
     try { ICON.warm(); } catch (e) {}
     var juse = K.juse, act = K.act, dp = K.dp, WRAP = -2, MATCH = -1, VIS = 0, GONE = 8;
     var LL = juse('android.widget.LinearLayout'), BT = juse('android.widget.Button'),
@@ -1268,7 +1532,7 @@ var UI = (function () {
        游戏更新加了新物品时，新 ID 照样能列出（名字用运行时兜底，图标没有就显示 ID 占位）。 */
     var ITEM_MAX = Math.max(NAMES.count, (function () { try { return IL.itemCount() | 0; } catch (e) { return 0; } })());
     log('物品范围上限 = ' + ITEM_MAX + '（离线名表 ' + NAMES.count + '）');
-    var rows = [], curFirst = -1, topPad = null, botPad = null, win = null;
+    var rows = [], curFirst = -1, topPad = null, botPad = null, win = null, LIST_LOG = '';
     var searchEt = null, infoTv = null, chipBtns = {}, chipRow = null, SCROLLER = null, WATCHER = null;
     var filterRow = null, filterTv = null;
     var catCache = {};
@@ -1295,9 +1559,13 @@ var UI = (function () {
       if (!q) {
         var c = catIds(curCat);
         if (c) return c;
-        var all = [];
-        for (var i = 1; i <= ITEM_MAX; i++) if (ICON.rect(i) || NAMES.get(i)) all.push(i);   // 全部：有图标或有名字的
-        return all;
+        if (!ALL_IDS) {
+          var t0 = Date.now(), all = [];
+          for (var i = 1; i <= ITEM_MAX; i++) if (ICON.rect(i) || NAMES.get(i)) all.push(i);   // 全部：有图标或有名字的
+          ALL_IDS = all;
+          prof('全部物品列表（' + ITEM_MAX + ' 个 ID）', t0);
+        }
+        return ALL_IDS;
       }
       var base = catIds(curCat), set = null;
       if (base) { set = {}; for (var b = 0; b < base.length; b++) set[base[b]] = 1; }
@@ -1307,7 +1575,9 @@ var UI = (function () {
         var nm = NAMES.get(id);
         if (!nm) { try { nm = itemNameFast(id); } catch (e) {} }   // 名表没有 → 问游戏（新物品）
         if (!nm) continue;
-        if (nm.toLowerCase().indexOf(q) >= 0) out2.push(id);
+        var low = NAME_LOW[id];
+        if (low === undefined) low = NAME_LOW[id] = nm.toLowerCase();   // 小写名缓存：按键时不再 6266 次 toLowerCase
+        if (low.indexOf(q) >= 0) out2.push(id);
       }
       return out2;
     }
@@ -1342,7 +1612,7 @@ var UI = (function () {
     }
     function pick(id) {
       try { hideIme(); } catch (e) {}
-      onPick(id); o.close();
+      cb(id); o.close();
     }
     function makeRowView() {
       var row = LL.$new(act); row.setOrientation(0);
@@ -1355,9 +1625,13 @@ var UI = (function () {
       for (var c = 0; c < COLS; c++) {
         var t = r.tiles[c], id = curIds[rowIdx * COLS + c];
         if (id === undefined) { t.id = -1; t.cell.setVisibility(GONE); continue; }
+        /* 同一格还是同一个物品就整格跳过（setImageBitmap 会新建 BitmapDrawable + invalidate，
+           是最贵的一步）。图集当时没就绪的话仍然要重填一次，等图集好了把图标补上。 */
+        if (t.id === id && (t.iconOk || !ICON.ready())) continue;
         t.id = id; t.cell.setVisibility(VIS);
         t.tv.setText(nameJava(id));
         var bm = null; try { bm = ICON.bitmap(id, ICON_PX); } catch (e) { err('取图标', e); }
+        t.iconOk = !!bm;
         if (bm) { t.iv.setImageBitmap(bm); t.iv.setVisibility(VIS); t.ph.setVisibility(GONE); }
         else { t.iv.setVisibility(GONE); t.ph.setText(jStr('ID ' + id)); t.ph.setVisibility(VIS); }
       }
@@ -1421,22 +1695,24 @@ var UI = (function () {
     }
     /* 重新算 id 列表 + 重建窗口（点分类 / 改搜索词都走这里） */
     function refreshList(reset) {
+      var tp = Date.now();
       curIds = computeIds();
+      prof('  列表计算 computeIds', tp);
       paintFilter();
-      if (infoTv) infoTv.setText(jStr('共 ' + curIds.length + ' 件' + (curFilter ? '（已筛选）' : '') + (curQuery ? ('（搜索：' + curQuery + '）') : '')));
-      if (reset || !rows.length) {
-        buildWindow();
-        try { o.scroll.scrollTo(0, 0); } catch (e) {}
-        applyWindow(0);
-      } else {
-        buildWindow();
-        try { o.scroll.scrollTo(0, 0); } catch (e) {}
-        applyWindow(0);
-      }
-      log('物品列表：' + (curFilter ? ('筛选=' + curFilter + ' ') : '') + '分类=' + (curCat < 0 ? '全部' : CAT_NAMES[curCat]) + ' 搜索="' + curQuery + '" → ' +
-          curIds.length + ' 件（' + Math.ceil(curIds.length / COLS) + ' 行）');
+      var infoTxt = '共 ' + curIds.length + ' 件' + (curFilter ? '（已筛选）' : '') + (curQuery ? ('（搜索：' + curQuery + '）') : '');
+      if (infoTv && infoTv.__txt !== infoTxt) { infoTv.__txt = infoTxt; infoTv.setText(jStr(infoTxt)); }
+      /* 窗口（6 行 × 4 格 = 120 个 View）只在第一次建；之后切换分类/搜索/重新打开都只是重填内容，
+         脏列表本来就有「环形复用 + 只填变化行」的机制，没必要整棵树推倒重建（那一步实测 51ms）。 */
+      if (!rows.length || !win) buildWindow();
+      else curFirst = -1;
+      try { o.scroll.scrollTo(0, 0); } catch (e) {}
+      applyWindow(0);
+      var lg = '物品列表：' + (curFilter ? ('筛选=' + curFilter + ' ') : '') + '分类=' + (curCat < 0 ? '全部' : CAT_NAMES[curCat]) + ' 搜索="' + curQuery + '" → ' +
+               curIds.length + ' 件（' + Math.ceil(curIds.length / COLS) + ' 行）';
+      if (lg !== LIST_LOG) { LIST_LOG = lg; log(lg); }        // 同一个结果不重复发日志（Frida 每条日志都要过消息通道）
     }
     function buildWindow() {
+      var tw = Date.now();
       clear();
       topPad = juse('android.view.View').$new(act); topPad.setLayoutParams(LLP.$new(MATCH, 0));
       o.body.addView(topPad);
@@ -1447,12 +1723,15 @@ var UI = (function () {
       rows = [];
       for (var i = 0; i < VIS_ROWS; i++) { var r = makeRowView(); rows.push(r); win.addView(r.row); }
       curFirst = -1;
+      prof('  建列表窗口（' + VIS_ROWS + ' 行 Java 视图）', tw);
     }
     function paintChips() {
       for (var k in chipBtns) {
-        var on = (String(curCat) === k);
-        try { chipBtns[k].setTextColor(on ? C.title : C.sub); } catch (e) {}
-        try { chipBtns[k].setBackground(on ? K.flatOn(C.btn) : K.flat(C.btn)); } catch (e) {}
+        var b = chipBtns[k], on = (String(curCat) === k);
+        if (b.__on === on) continue;                 // 只有 2 个 chip 会变状态，别 20 个全重画（每个 flat() 都新建 drawable）
+        b.__on = on;
+        try { b.setTextColor(on ? C.title : C.sub); } catch (e) {}
+        try { b.setBackground(on ? K.flatOn(C.btn) : K.flat(C.btn)); } catch (e) {}
       }
     }
     /* 筛选条：只在带筛选打开时显示（分类 chips 同时隐藏），一键可看全部 */
@@ -1575,10 +1854,29 @@ var UI = (function () {
       }
       log('窗口（first=' + curFirst + '，共 ' + Math.ceil(curIds.length / COLS) + ' 行）\n  ' + out.join('\n  '));
     };
+    var tAll = Date.now();
     buildChrome();
+    prof('界面骨架 buildChrome（搜索框+分类chips）', tAll);
     curCat = (startCat === undefined || startCat === null) ? -1 : startCat;
     paintChips();
+    try { o.show(); } catch (e) { err('显示物品面板', e); }     // 常驻弹层是挂上去后隐藏的，首次要显式 show
     refreshList(true);
+    prof('物品面板首次构建', tAll);
+    /* 复用入口：换回调 + 重置筛选/分类/搜索词 + 重算列表，然后显示。
+       视图树不再重建 → 第二次起打开从 ~133ms 降到 ~10ms。 */
+    PICK.hide = function () { try { o.close(); } catch (e) {} };
+    PICK.open = function (nextCb, cat, filt) {
+      var t1 = Date.now();
+      cb = nextCb;
+      curFilter = (filt === 'ammo' || filt === 'coin') ? filt : null;
+      curQuery = '';
+      try { searchEt.setText(jStr('')); } catch (e) {}
+      curCat = (cat === undefined || cat === null) ? -1 : cat;
+      paintChips();
+      try { o.show(); } catch (e) { err('显示物品面板', e); }
+      refreshList(true);
+      prof('物品面板复用打开', t1);
+    };
   }
 
   /* ═════════ 背包操作（读 / 增 / 删 / 改） ═════════
@@ -1608,14 +1906,21 @@ var UI = (function () {
       return (n > 0 && n <= 60) ? n : 58;
     } catch (e) { return 58; }
   }
+  /* 格子尺寸统一 → 6 个常量 drawable 就够，不必每次新建（建 59 格原来要新建 59 个 GradientDrawable） */
+  var BAG_BG = {};
   function bagBg(kind, sel) {
     var K = S.ctx; if (!K) return null;
-    if (sel) return K.flatOn(argb(0xFF, 0x33, 0x2A, 0x12));      // 选中：金边
-    if (kind === 'hotbar') return K.flat(argb(0xFF, 0x16, 0x2A, 0x38));
-    if (kind === 'coin')   return K.flat(argb(0xFF, 0x33, 0x2B, 0x12));
-    if (kind === 'ammo')   return K.flat(argb(0xFF, 0x14, 0x2E, 0x22));
-    if (kind === 'other')  return K.flat(argb(0xFF, 0x24, 0x1C, 0x2E));
-    return K.flat(C.btn);
+    var key = (sel ? 'sel' : kind);
+    var d = BAG_BG[key];
+    if (d) return d;
+    if (sel) d = K.flatOn(argb(0xFF, 0x33, 0x2A, 0x12));         // 选中：金边
+    else if (kind === 'hotbar') d = K.flat(argb(0xFF, 0x16, 0x2A, 0x38));
+    else if (kind === 'coin')   d = K.flat(argb(0xFF, 0x33, 0x2B, 0x12));
+    else if (kind === 'ammo')   d = K.flat(argb(0xFF, 0x14, 0x2E, 0x22));
+    else if (kind === 'other')  d = K.flat(argb(0xFF, 0x24, 0x1C, 0x2E));
+    else d = K.flat(C.btn);
+    BAG_BG[key] = d;
+    return d;
   }
 
   function bagBuild() {
@@ -1717,18 +2022,24 @@ var UI = (function () {
     for (var i = 0; i < BAG.tiles.length; i++) {
       var t = BAG.tiles[i], d = snap[i];
       if (!d) continue;
-      var sig = d.type + '|' + d.stack + '|' + (BAG.sel === i ? 1 : 0);
+      var sig = d.type * 200000 + d.stack * 2 + (BAG.sel === i ? 1 : 0);   // 数字签名：不再每格拼字符串
       if (!force && t.sig === sig) continue;
       t.sig = sig; changed++;
       if (d.type > 0) {
-        var bm = null; try { bm = ICON.bitmap(d.type, dp2px(38)); } catch (e) {}
-        if (bm) { t.iv.setImageBitmap(bm); t.iv.setVisibility(0); t.ph.setVisibility(8); }
-        else { t.iv.setVisibility(8); t.ph.setText(jStr('?')); t.ph.setVisibility(0); }
+        if (t.bmpType !== d.type) {                  // 类型没变就别再裁剪位图（补弹药/改数量每秒都可能触发）
+          var bm = null; try { bm = ICON.bitmap(d.type, dp2px(38)); } catch (e) {}
+          t.bmpType = d.type;
+          if (bm) { t.iv.setImageBitmap(bm); t.iv.setVisibility(0); t.ph.setVisibility(8); }
+          else { t.iv.setVisibility(8); t.ph.setText(jStr('?')); t.ph.setVisibility(0); }
+        }
         var nm = d.name || ('#' + d.type);
         t.tv.setText(jStr(nm.length > 5 ? nm.slice(0, 5) + '…' : nm));
         t.nv.setText(jStr('槽' + d.slot + (d.stack > 1 ? (' ×' + d.stack) : '')));
       } else {
-        t.iv.setVisibility(8); t.ph.setText(jStr('+')); t.ph.setVisibility(0);
+        if (t.bmpType !== 0) {
+          t.bmpType = 0;
+          t.iv.setVisibility(8); t.ph.setText(jStr('+')); t.ph.setVisibility(0);
+        }
         t.tv.setText(jStr(t.group.kind === 'coin' ? '钱币' : t.group.kind === 'ammo' ? '弹药' : '空'));
         t.nv.setText(jStr('槽' + d.slot));
       }
@@ -1738,7 +2049,11 @@ var UI = (function () {
     if (changed) log('背包：更新 ' + changed + ' 格（选中 ' + BAG.sel + '）');
     bagInfo();
   }
-  function dp2px(v) { try { return Math.round(v * S.act.getResources().getDisplayMetrics().density.value); } catch (e) { return v * 3; } }
+  var DENS = 0;
+  function dp2px(v) {
+    if (!DENS) { try { DENS = S.act.getResources().getDisplayMetrics().density.value; } catch (e) { DENS = 3; } }
+    return Math.round(v * DENS);
+  }
 
   function bagInfo() {
     var d = BAG.last && BAG.last[BAG.sel], n = 0;
@@ -1750,7 +2065,7 @@ var UI = (function () {
     UI.setLabel('bag-info', txt);
   }
   /* 只选中（放入物品后调用，不弹操作窗） */
-  function bagSelect(slot) { BAG.sel = slot; bagRefresh(true); }
+  function bagSelect(slot) { BAG.sel = slot; bagRefresh(false); }   // 脏检查已含「选中态」，不必全量重画
   /* 点格子：选中 + 在旁边弹操作按钮 */
   function bagTap(slot) { log('背包：点格子 ' + slot); bagSelect(slot); bagPopup(slot); }
   function bagClosePopup() {
@@ -1893,7 +2208,7 @@ var UI = (function () {
 
   return { mount: mount, close: close, say: say, toggleCollapse: toggleCollapse,
     setLabel: setLabel, setImage: setImage, setButton: setButton, setVisible: setVisible, setSwitch: setSwitch, setSeek: setSeek,
-    promptNumber: promptNumber, pickItem: pickItem, showPage: showPage, post: postMain, S: S,
+    promptNumber: promptNumber, pickItem: pickItem, prewarm: prewarm, prewarmBag: prewarmBag, showPage: showPage, post: postMain, S: S,
     bagBuild: bagBuild, bagRefresh: bagRefresh, bagSelect: bagSelect, bagSlot: bagSlot, bagItem: bagItem,
     bagSlots: function () { return bagSlots(); }, bagSelect: bagSelect, bagTap: bagTap, bagClosePopup: bagClosePopup,
     bagPopup: bagPopup, bagKind: bagGroupOf,
@@ -1925,8 +2240,15 @@ var AMMO = {}, AMMO_TYPE = {}, AMMO_INJECT = -1, AMMO_NEED = 0;
 var hookHandle = null, hookEquip = null, HIT = 0, HIT2 = 0, TICKS = 0;
 /* 持续类效果统一写在这里。两路触发：① ResetEffects 钩子（实测 60Hz，仅在脚本处于加载态时有效）
    ② 50ms 心跳兜底（钩子失效或脚本被 unload 后 JS 仍在跑时也能生效）。 */
+/* 所有持续类开关都关掉时直接返回：游戏回到零侵入（每帧省下十几~几十次字段写入，
+   而写入是本脚本唯一每帧都跑的东西）。这里每次都重新算，不做缓存 → 不会有「开了开关不生效」的时滞。 */
+function playerIdle() {
+  return !(STATE.inv || STATE.minion || STATE.full || STATE.god || STATE.fly || STATE.speed || STATE.luck ||
+           STATE.evBlood || STATE.evEclipse || STATE.evRain || STATE.evSand || STATE.evParty ||
+           STATE.evLantern || STATE.evGoblin || STATE.evPirate || STATE.evMartian);
+}
 function applyToPlayer(p) {
-  if (!p || p.isNull()) return;
+  if (!p || p.isNull() || playerIdle()) return;
   if (STATE.inv) { IL.setF(p, 'creativeGodMode', true); IL.setF(p, 'immune', true); IL.setF(p, 'immuneTime', 3600); IL.setF(p, 'lavaImmune', true); }
   if (STATE.minion) IL.setF(p, 'maxMinions', 20);
   if (STATE.full) {
@@ -1961,15 +2283,21 @@ function applyToPlayer(p) {
 /* 天气双向同步：游戏自己在下雨/沙尘暴时，把开关也点亮；
    用户刚关掉的 2 秒内不反向同步（否则游戏还没刹住，开关会自己弹回去） */
 var SYNC_MUTE = { evRain: 0, evSand: 0 };
+/* 面板刚挂载后需要补一轮 UI（历史上出现过「STATE 与游戏一致、但开关没刷」的 bug），
+   补完就清掉 → 之后每 50ms 不再白调两次跨线程 isChecked()（那是全关状态下最大的一笔固定开销）。 */
+var SYNC_UI = true, SYNC_TICK = 0;
 function syncWeather() {
   try {
     var now = Date.now();
+    /* 每 40 个心跳（2 秒）做一次「连真实勾选状态一起比」的完整核对，
+       其余时候只比游戏值 → 每 50ms 省下 2 次跨线程 isChecked()；万一哪路状态漂了，2 秒内也会自愈。 */
+    var full = SYNC_UI || ((SYNC_TICK = (SYNC_TICK + 1) % 40) === 0);
     if (now > (SYNC_MUTE.evRain || 0)) {
       var r = !!IL.getS(IL.Main, 'raining');
       /* 注意：不能只比 STATE —— 如果上一次同步时面板还没挂载，UI.setSwitch 会直接返回，
          STATE 却已经改成和游戏一致，于是「永远不会再补 UI」，开关就一直显示关闭。
          所以这里每次都和**开关的真实勾选状态**比一次，不一致就补上。 */
-      var rUi = (UI.S.switches['e-rain'] ? !!UI.S.switches['e-rain'].isChecked() : null);
+      var rUi = full ? (UI.S.switches['e-rain'] ? !!UI.S.switches['e-rain'].isChecked() : null) : null;
       if (r !== STATE.evRain || (rUi !== null && rUi !== r)) {
         var changed = (r !== STATE.evRain);
         STATE.evRain = r;
@@ -1983,7 +2311,7 @@ function syncWeather() {
     }
     if (now > (SYNC_MUTE.evSand || 0)) {
       var sd = !!IL.getS(IL.Sandstorm, 'Happening');
-      var sUi = (UI.S.switches['e-sand'] ? !!UI.S.switches['e-sand'].isChecked() : null);
+      var sUi = full ? (UI.S.switches['e-sand'] ? !!UI.S.switches['e-sand'].isChecked() : null) : null;
       if (sd !== STATE.evSand || (sUi !== null && sUi !== sd)) {
         var changed2 = (sd !== STATE.evSand);
         STATE.evSand = sd;
@@ -1995,6 +2323,7 @@ function syncWeather() {
         }
       }
     }
+    if (full) SYNC_UI = false;        // 完整核对做过了，之后走廉价路径（2 秒后再来一次）
   } catch (e) {}
 }
 /* 真正停掉本轮天气（写字段 + 调游戏自己的 Stop 方法，双保险） */
@@ -2061,9 +2390,11 @@ function invasionToggle(key, type, label, on) {
 }
 
 function applyContinuous() {
-  try { applyToPlayer(IL.player()); } catch (e) {}
+  var p = null;
+  try { p = IL.player(); } catch (e) {}      // 同一个 tick 里只扫一次玩家数组
+  try { applyToPlayer(p); } catch (e) {}
   try { applyEvents(); } catch (e) {}
-  try { if (STATE.noAmmo) ammoTick(IL.player()); } catch (e) {}
+  try { if (STATE.noAmmo) ammoTick(p); } catch (e) {}
   try { syncTimeFromGame(false); } catch (e) {}
   try { syncWeather(); } catch (e) {}
 }
@@ -2081,7 +2412,7 @@ function ensureHook() {
   var f1 = IL.findMethod(IL.Player, 'PlayerFrame', [0, 1]);
   if (!f1) { log('找不到 PlayerFrame（游戏更新改签名了？）'); return; }
   hookHandle = Interceptor.attach(f1.m.readPointer(), {
-    onEnter: function (a) { HIT++; globalThis.__hit = HIT; applyToPlayer(a[0]); }
+    onEnter: function (a) { HIT++; applyToPlayer(a[0]); }
   });
   log('PlayerFrame 命中（argc=' + f1.argc + '）');
   /* 第二个钩子：UpdateEquips 在 ResetEffects **之后**、移动/速度计算**之前**。
@@ -2091,7 +2422,7 @@ function ensureHook() {
   var f2 = IL.findMethod(IL.Player, 'UpdateEquips', [1, 0, 2]);
   if (f2) {
     hookEquip = Interceptor.attach(f2.m.readPointer(), {
-      onEnter: function (a) { HIT2++; globalThis.__hit2 = HIT2; applyToPlayer(a[0]); }
+      onEnter: function (a) { HIT2++; applyToPlayer(a[0]); }
     });
     log('已挂 UpdateEquips 钩子（argc=' + f2.argc + '，每帧属性写入点）');
   } else { log('找不到 UpdateEquips，移速类修改可能不生效'); }
@@ -2188,9 +2519,13 @@ function updateItemInfo(extra) {
   try { UI.setImage('item-info', ICON.bitmap(id, dp44())); } catch (e) { err('刷新物品图标', e); }
 }
 /* 44dp 的像素值（图标尺寸；拿不到 Activity 就按本机 3.0 密度退回 132px） */
+var DP44 = 0;
 function dp44() {
-  try { return Math.round(44 * UI.S.act.getResources().getDisplayMetrics().density.value); }
-  catch (e) { return 132; }
+  if (!DP44) {
+    try { DP44 = Math.round(44 * UI.S.act.getResources().getDisplayMetrics().density.value); }
+    catch (e) { DP44 = 132; }
+  }
+  return DP44;
 }
 var KIND_NAME = { none: '空手', ranged: '远程/枪械', magic: '魔法', summon: '召唤', melee: '近战', tool: '工具', other: '其它' };
 function applyKind(kind) {
@@ -2212,14 +2547,14 @@ function pollHeld(force) {
   if (changed) {
     STATE.slot = h.slot; STATE.heldType = h.type;
     refreshModUI(h.slot);
-    readHeld(true);              // 换武器/换槽 → 自动读一次当前武器数据（只写日志）
+    readHeld(true, h);           // 换武器/换槽 → 自动读一次当前武器数据（只写日志，复用已算好的 h）
   } else {
     UI.setLabel('wp-mods', modsText(h.slot));
   }
 }
 /* 静默读武器：结果只进日志（用户要求：改了武器不要在面板上弹提示） */
-function readHeld(silent) {
-  var h = heldInfo(); if (!h) return null;
+function readHeld(silent, h0) {
+  var h = h0 || heldInfo(); if (!h) return null;      // 轮询里已经算过就复用，别重算一遍
   if (h.kind === 'none') {
     if (!silent) UI.say('槽' + h.slot + ' 是空的（切到武器槽会自动读取）');
     return null;
@@ -2415,7 +2750,7 @@ var ACT = {
         n = Math.max(1, n | 0); STATE.itemCount = n;
         UI.setLabel('item-count', '数量：' + n);
         UI.say(bagGive(id, n));
-        UI.bagRefresh(true);
+        UI.bagRefresh(false);
       });
     });
   },
@@ -2427,7 +2762,7 @@ var ACT = {
       var max = IL.getOn(IL.Item, it, 'maxStack') | 0;
       if (max > 1 && n > max) n = max;
       IL.setOn(IL.Item, it, 'stack', max > 1 ? n : 1);
-      UI.bagRefresh(true);
+      UI.bagRefresh(false);
       log('[背包] 槽' + d.slot + ' 数量 → ' + n);
       UI.say('槽' + d.slot + ' 数量已改为 ' + n);
     });
@@ -2436,7 +2771,7 @@ var ACT = {
     var d = UI.bagItem(); if (!d) return UI.say('先选中一个有物品的格子');
     var p = IL.player(); if (!p) return;
     IL.call(IL.slotItem(IL.invArr(p), d.slot), IL.Item, 'SetDefaults', [IL.intArg(0), IL.boolArg(false)]);
-    UI.bagRefresh(true);
+    UI.bagRefresh(false);
     log('[背包] 删除 槽' + d.slot + '：' + d.name);
     UI.say('已删除 槽' + d.slot + '：' + d.name + ' ×' + d.stack);
   },
@@ -2454,7 +2789,7 @@ var ACT = {
     IL.call(cell, IL.Item, 'SetDefaults', [IL.intArg(d.type), IL.boolArg(false)]);
     IL.setOn(IL.Item, cell, 'stack', d.stack);
     UI.bagSelect(target);
-    UI.bagRefresh(true);
+    UI.bagRefresh(false);
     UI.say('已复制到 槽' + target);
   },
   'bag-replace': function () {
@@ -2469,7 +2804,7 @@ var ACT = {
       var it = IL.slotItem(IL.invArr(p), d.slot);
       IL.call(it, IL.Item, 'SetDefaults', [IL.intArg(id), IL.boolArg(false)]);
       IL.setOn(IL.Item, it, 'stack', 1);
-      UI.bagRefresh(true);
+      UI.bagRefresh(false);
       log('[背包] 槽' + d.slot + ' 替换为 ' + itemNameFast(id));
       UI.say('槽' + d.slot + ' 已替换为 ' + itemNameFast(id));
     }, null, filt);
@@ -2488,7 +2823,7 @@ var ACT = {
       IL.call(it, IL.Item, 'SetDefaults', [IL.intArg(0), IL.boolArg(false)]);
       n++;
     }
-    UI.bagRefresh(true);
+    UI.bagRefresh(false);
     log('[背包] 清空：删除了 ' + n + ' 格');
     UI.say('已清空背包（删除 ' + n + ' 格）');
   },
@@ -2623,7 +2958,7 @@ function onPageEnter(id) {
     else if (id === 'pg-weapon') { ACT['w-read'](); try { refreshModUI(STATE.slot); } catch (e) {} }
     else if (id === 'pg-time') { syncTimeFromGame(true); }
     else if (id === 'pg-event') { syncWeather(); }
-    else if (id === 'pg-item') { UI.bagBuild(); UI.bagRefresh(true); }
+    else if (id === 'pg-item') { UI.bagBuild(); UI.bagRefresh(false); }
   } catch (e) { err('进入页 ' + id, e); }
 }
 /* 时间条跟随游戏当前时间（只在时间页、且用户没在拖动时刷新） */
@@ -2842,6 +3177,7 @@ function selfTest() {
 if (!IL) { log('il2cpp 初始化失败，脚本退出'); }
 else {
   UI.mount(SPEC, dispatch, function () {
+    SYNC_UI = true;                  // 面板（重新）挂载后，下一次天气同步要按真实勾选状态补一次 UI
     try { ICON.warm(); } catch (e) { err('预热图标', e); }
     /* 面板就绪后：初始化显示 + 起后台心跳 */
     try { updateItemInfo(); } catch (e) { err('初始化物品信息', e); }
@@ -2865,7 +3201,7 @@ else {
 
     /* 心跳：持续类效果 + 锁时间 + 补弹药 */
     globalThis.TERRARIA_SYS_MENU_TIMERS.push(setInterval(function () {
-      TICKS++; globalThis.__ticks = TICKS;
+      TICKS++;
       try { applyContinuous(); } catch (e) {}
       try {
         if (STATE.timeLock) {
@@ -2901,10 +3237,21 @@ else {
       catch (e) { err('延迟挂持续效果钩子', e); }
     }, 900);
 
+    /* 预热物品面板：这时 Java 侧已经全部就绪、用户多半还在看面板，
+       提前把 120+ 个视图建好并隐藏，首次点「放入/添加物品」就没有那 ~150ms 的构建卡顿。 */
+    if (CFG.prewarm) setTimeout(function () {
+      try { UI.post(function () { try { UI.prewarm(); } catch (e) { err('预热', e); } }); }
+      catch (e) { err('投递预热', e); }
+    }, 2200);
+    if (CFG.prewarm) setTimeout(function () {
+      try { UI.post(function () { try { UI.prewarmBag(); } catch (e) { err('预热背包', e); } }); }
+      catch (e) { err('投递预热背包', e); }
+    }, 5000);
+
     /* 自检（CFG.selfTest=true 时）——必须在加载中的会话里跑，脚本被 unload 后 Frida 回调不再送达 */
     if (CFG.selfTest) setTimeout(selfTest, 1500);
   });
-  globalThis.TERRARIA_SYS_MENU = { close: UI.close, say: UI.say, act: ACT, state: STATE, spec: SPEC,
+  globalThis.TERRARIA_SYS_MENU = { close: UI.close, say: UI.say, act: ACT, state: STATE, spec: SPEC, cfg: CFG,
                                    ui: UI.S, il: IL, pick: UI.pickItem, icon: ICON,
                                    toggle: UI.toggleCollapse, post: UI.post, num: UI.promptNumber, selfTest: selfTest,
                                    bag: { build: UI.bagBuild, refresh: UI.bagRefresh, select: UI.bagSelect,

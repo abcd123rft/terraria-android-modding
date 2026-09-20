@@ -107,6 +107,16 @@ Update → UpdateSocialShadow → UpdateImmunity → ResetEffects → UpdateBuff
 
 ### 4.2 Heartbeat (50 ms `setInterval`)
 For state re-assertion (weather), inventory scans (infinite ammo), seek-bar sync, held-weapon polling.
+
+**The two things that actually matter for performance** (measured 2026-09-20):
+1. **One Java call costs 0.13-0.28 ms** on this bridge — rebuilding 120 views = 100 ms+, so UI reuse beats micro-tuning.
+   Build overlays/lists/keypads once and `show()`/`hide()` them; never call `setText`/`setBackground`/`isChecked`
+   when the value is unchanged, and store that "already set" marker **on the View itself** (`v.__txt`) — a module-level
+   map keyed by node id goes stale when the panel is re-mounted and leaves labels blank.
+2. **Never enter il2cpp per field access** (2-4 us each): cache `il2cpp_field_get_offset` and read/write
+   `p.add(off)` directly (1.4 us, zero il2cpp calls). Verify each field once against the official API getter and
+   fall back to the slow path on mismatch. Negative caching needs `ck in cache` — `if (cache[ck])` is always false for
+   a cached null/false.
 Heavy work (network, bitmap crops) must **not** run on the main thread (`NetworkOnMainThreadException`) —
 use `setTimeout` (the Frida JS thread).
 

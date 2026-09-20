@@ -69,6 +69,18 @@ python3 ../tools/jshook.py exec --file terraria-mod-menu.js --sub "selfTest: fal
 
 ## Changelog (latest first)
 
+**v1.2.8**
+- New experimental switch **"allow multiple special minions"**: besides the total cap, the game remembers
+  "already have one of this type" in **per-type boolean fields** (`stardustMinion`, `palworldFoxsparksMinion`,
+  `twinsMinion`, `spiderMinion`, …, 14 in total, found by enumerating the Player field table with
+  `il2cpp_class_get_fields`); the switch clears them every frame.
+- The manual now states two **vanilla hard rules** that no field write can change: (1) "unique" minions such as the
+  Stardust Dragon always stay a single entity — extra slots make it **longer**, not more numerous; (2) sentries of the
+  **same type** cannot coexist (re-summoning relocates the old one) — `maxTurrets` only raises the total across types.
+- Also documented a testing pitfall: this port **cannot simulate "press use" from Frida** (`controlUseItem` and
+  `Main.mouseLeft` are both overwritten by the input layer every frame), so "can a second one be summoned" must be
+  verified by hand.
+
 **v1.2.7**
 - New **"Remove summon count limit"** switch on the Misc page: raises both the **minion** (`maxMinions`) and
   **sentry/turret** (`maxTurrets`) caps to 99 and keeps `slotsMinions` in sync, plus a button that reads the live

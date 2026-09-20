@@ -67,6 +67,15 @@ python3 ../tools/jshook.py exec --file terraria-mod-menu.js --sub "selfTest: fal
 
 ## 更新记录（新的在上）
 
+**v1.2.8**
+- 「其它」页再加 **特殊仆从也可多只（实验）**：游戏除总数外还用**每类一个布尔字段**记住「已经有这种了」
+  （`stardustMinion` 星尘龙 / `palworldFoxsparksMinion` 火绒狐 / `twinsMinion` / `spiderMinion` … 共 14 个，
+  用 `il2cpp_class_get_fields` 枚举 Player 字段表挖出来的），这个开关把它们每帧清 false。
+- 手册里写明两条**游戏本身的硬规则**（改不了）：①「唯一型」仆从（星尘之龙）永远只有一条，多的召唤槽让它**变长**而不是变多；
+  ②哨兵/炮台**同一类型只能存在一个**（再召唤是把原来那个挪过去），`maxTurrets` 只放开「不同类型哨兵的总数」。
+- 顺带记下测试方法上的坑：这个移植版**没法从 Frida 模拟"按键使用物品"**（写 `controlUseItem` 或 `Main.mouseLeft`
+  都会被输入层每帧覆盖），所以"能不能召出第二只"只能人工点一下验证。
+
 **v1.2.7**
 - 「其它」页新增**解除召唤数量限制**：把**仆从**（`maxMinions`）与**哨兵/炮台**（`maxTurrets`）上限一起抬到 99，
   装备召唤槽（`slotsMinions`）同步，另有「读取当前召唤上限」按钮回显实际数值。

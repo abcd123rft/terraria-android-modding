@@ -2245,6 +2245,7 @@ var UI = (function () {
 var STATE = {
   full: false, god: false, inv: false, fly: false, speed: false, luck: false, minion: false,
   summonAll: false,                     // 解除召唤数量限制（仆从 + 哨兵，每帧维持）
+  summonMulti: false,                   // 实验：连「每类只能一只」的特殊仆从也放开
   noAmmo: false, auto: false,
   /* 事件开关（9 个都做成开关，开着就每 50ms 复写一次，防止被游戏自己清掉） */
   evBlood: false, evEclipse: false, evRain: false, evSand: false,
@@ -2263,12 +2264,21 @@ var hookHandle = null, hookEquip = null, HIT = 0, HIT2 = 0, TICKS = 0;
 /* 召唤上限值：一次 100 个仆从手机会很卡，但「解除限制」本来就是给用户自己克制的；
    实测 20 个流畅、50 个开始掉帧，所以默认给 99（够用且不至于一开就卡死）。 */
 var SUMMON_CAP = 99;
+/* 「每类只能一只」的特殊仆从：游戏用这些布尔字段记住「已经有这种了」。
+   枚举自 Player 类的字段表（2026-09-20）。每帧清成 false → 让游戏以为还没有，
+   从而允许再召唤一只（星尘之龙、火绒狐、双子、蜘蛛…都在这组里）。
+   ⚠ 实验性：清掉这些标志可能让个别仆从的形态/AI 分支表现异常（例如蜘蛛的循环外观、
+   双子的两只眼睛），出问题就关掉这个开关。 */
+var PER_TYPE_MINION_FLAGS = ['hornetMinion', 'impMinion', 'twinsMinion', 'spiderMinion',
+  'pirateMinion', 'sharknadoMinion', 'UFOMinion', 'DeadlySphereMinion', 'stardustMinion',
+  'flinxMinion', 'abigailMinion', 'deadCellsMushroomBoiMinion', 'palworldCattivaMinion',
+  'palworldFoxsparksMinion'];
 /* 持续类效果统一写在这里。两路触发：① ResetEffects 钩子（实测 60Hz，仅在脚本处于加载态时有效）
    ② 50ms 心跳兜底（钩子失效或脚本被 unload 后 JS 仍在跑时也能生效）。 */
 /* 所有持续类开关都关掉时直接返回：游戏回到零侵入（每帧省下十几~几十次字段写入，
    而写入是本脚本唯一每帧都跑的东西）。这里每次都重新算，不做缓存 → 不会有「开了开关不生效」的时滞。 */
 function playerIdle() {
-  return !(STATE.inv || STATE.minion || STATE.summonAll || STATE.full || STATE.god || STATE.fly || STATE.speed || STATE.luck ||
+  return !(STATE.inv || STATE.minion || STATE.summonAll || STATE.summonMulti || STATE.full || STATE.god || STATE.fly || STATE.speed || STATE.luck ||
            STATE.evBlood || STATE.evEclipse || STATE.evRain || STATE.evSand || STATE.evParty ||
            STATE.evLantern || STATE.evGoblin || STATE.evPirate || STATE.evMartian);
 }
@@ -2284,6 +2294,10 @@ function applyToPlayer(p) {
     IL.setF(p, 'maxMinions', SUMMON_CAP);
     IL.setF(p, 'maxTurrets', SUMMON_CAP);
     IL.setF(p, 'slotsMinions', SUMMON_CAP - 1);
+  }
+  /* 实验：把「每类只能一只」的标志也清掉（见 PER_TYPE_MINION_FLAGS 的注释） */
+  if (STATE.summonMulti) {
+    for (var mi = 0; mi < PER_TYPE_MINION_FLAGS.length; mi++) IL.setF(p, PER_TYPE_MINION_FLAGS[mi], false);
   }
   if (STATE.full) {
     IL.setF(p, 'statDefense', 100);
@@ -2660,6 +2674,11 @@ var ACT = {
   'c-speed': function (v) { STATE.speed = !!v; if (v) ensureHook(); UI.say('加速跑 ' + (v ? '开' : '关')); },
   'c-luck':  function (v) { STATE.luck = !!v; if (v) ensureHook(); UI.say('幸运拉满 ' + (v ? '开' : '关')); },
   'c-minion':function (v) { STATE.minion = !!v; if (v) ensureHook(); UI.say('召唤上限 20 ' + (v ? '开' : '关')); },
+  'c-summonmulti': function (v) {
+    STATE.summonMulti = !!v;
+    if (v) { STATE.summonAll = true; ensureHook(); }        // 多只的前提是先解除数量限制
+    UI.say('特殊仆从多只 ' + (v ? '开（实验：星尘龙/火绒狐等也能再召）' : '关'));
+  },
   'c-summonall': function (v) {
     STATE.summonAll = !!v; if (v) ensureHook();
     if (v) {
@@ -3150,8 +3169,10 @@ var SPEC = [
 
   { k: 'page', id: 'pg-misc', label: '其它', open: false, items: [
     { k: 'sw', id: 'c-summonall', label: '解除召唤数量限制' },
+    { k: 'sw', id: 'c-summonmulti', label: '特殊仆从也可多只（实验）' },
     { k: 'note', text: '召唤数量限制：把仆从（maxMinions）与哨兵/炮台（maxTurrets）的上限一起抬到 ' + SUMMON_CAP + '，装备召唤槽（slotsMinions）同步。这三个字段游戏每帧按装备重算，所以脚本每帧重写一次（实测一次性写 400ms 内就被改回）。宠物游戏只允许一只，没有数量字段可改。' },
     { k: 'btn', id: 'summon-read', label: '读取当前召唤上限' },
+    { k: 'note', text: '注意游戏本身的两条硬规则（改不了，属于设计）：① 星尘之龙这类「唯一型」仆从只会有一条，多给的召唤槽会让它变长，不会变多（想强行多只可试上面的实验开关）；② 哨兵/炮台同一类型只能存在一个，再召唤是把它挪过去，maxTurrets 只放开「不同类型哨兵的总数」。' },
     { k: 'btn', id: 'info', label: '打印内部状态到日志' },
     { k: 'btn', id: 'icon-status', label: '图标/图集状态' },
     { k: 'note', text: '面板属于游戏进程：退出游戏即消失；重发脚本会先清掉上一次的残留。标题栏可按住拖动。' }

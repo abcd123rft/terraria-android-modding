@@ -63,3 +63,14 @@
 | 37 | 读背包格读到**大负数** `type`（垃圾指针） | 槽位写死 60，而本移植版 `Player.inventory` 只有 **59** 格（0–58） | 运行时读数组长度 `arr.add(0x18).readS32()` 再夹住循环 |
 | 38 | 模块级函数调用 UI 内部的辅助函数报 `ReferenceError: 'bagSlots' is not defined` | 辅助函数定义在 UI 模块（IIFE）里，模块级作用域看不到 | 统一走 `UI.xxx()`（连踩三处）；调试入口 `TERRARIA_SYS_MENU.bag.*` |
 | 39 | 天气开关「跟随游戏状态」后雨再也不停 | 自动同步点亮的开关也走了「每帧复写」= 无限维持 | 加 `auto` 标记：跟随=不维持（自然停→开关自动灭），用户自己点开才维持；**修 UI 时不要动这个标记** |
+| 40 | 测试脚本用 `getChildAt()` 遍历视图树，取不到文字（`getText()` 静默失败） | `ViewGroup.getChildAt` 的**声明返回类型是 `android.view.View`**，Frida 只暴露该类型的方法；`getParent()` 同理返回 `ViewParent`（连 `getVisibility()` 都没有） | 每次取到子节点先 `Java.cast(c, Java.use('android.widget.TextView'))` / `Java.cast(p, ViewGroup)` 再用；**别用 try/catch 吞掉**，否则会误判成「按钮不存在」 |
+| 41 | 在 Frida `setTimeout` 回调里直接 `M.bag.tap()` / 点按钮 → `CalledFromWrongThreadException: Expected: main Calling: Thread-4` | Frida 的定时器跑在自己的线程，Android 视图只能在**主线程**动；而且此时坐标全是错的（`格子@241,3603`） | 定时器只负责**排期**：`setTimeout(function(){ M.post(fn) }, ms)`，所有视图操作都放进 `M.post`（内部走主线程 Handler） |
+| 42 | 物品面板要给「弹药格」只列弹药，运行时逐 ID 问游戏太慢 | —— | 从离线物品表按「弹药ID > 0」生成 ID **区间串**（80 件压成 46 段，约 250 字符）内嵌脚本，运行时按区间判成员：零文件读取、零 il2cpp 调用；钱币就是 71–74 |
+| 43 | 「脚本卡」以为是每帧钩子的锅，其实钩子全开也只占每秒 ~2.7ms | Frida 里 **一次 Java 调用实测 0.13–0.28ms**：重建 120 个 View = 100ms+。`setText`/`new Button`/`setBackground`/`isChecked` 才是真瓶颈 | 界面**只建一次**（弹层改常驻：关闭只 `setVisibility(GONE)`，下次 `show()` 复用）；列表窗口/分类 chips/标签页只在**状态真变了**时才碰 View；先用 `cfg.prof` 分段计时定位，别凭感觉优化 |
+| 44 | 每个字段都要 `il2cpp_field_get_value/set_value`（2–4µs），钩子每帧写十几个、背包每秒扫 59 格 | IL2CPP 实例字段就是「对象指针 + `FieldInfo.offset`」 | `il2cpp_field_get_offset` 取偏移缓存住，之后 `p.add(off).writeFloat(v)` 直读直写（快 2–3 倍且零 il2cpp 调用，慢路径计数应恒为 0）。⚠ **读取用 `ck in cache` 判负缓存**，别用 `if (cache[ck])`——存进去的 null/false 会被判假，等于没缓存 |
+| 45 | 直读的偏移「理论上对」但不敢用在正式脚本里 | 布局假设一旦不成立就是**静默写错内存** | 每个字段**第一次**直读时同时用官方 API 读一遍**对拍**，不一致就永久退回慢路径 + 写日志（`字段直读校验不一致：xxx`）。自校验让优化可回退、可观测 |
+| 46 | UI 去重缓存（「文本没变就别 setText」）在**面板关闭再打开后**把新 View 判成「已设置」→ 状态栏/标签空白 | 去重标记记在模块级 map（按 id），而 View 是每次挂载新建的 | 标记记在 **View 自己身上**（`v.__txt`/`v.__vis`），View 一换标记自然失效；实测 Frida 的 Java 包装对象**可以加 JS 属性**，也可以当 `Map` 的键 |
+| 47 | 大件 UI 首次构建卡 150–300ms，用户点开时要干等 | —— | **后台预热**（`cfg.prewarm`）：挂载后 `UI.post()` 里先建好再隐藏（同一轮 JS 内 show+hide，不会闪），用户点开时 0 等待；代价是启动后多两次主线程小卡（分段投递，别一次全建） |
+| 48 | 心跳里每 50ms 无条件 `isChecked()` 查真实勾选状态（跨线程 JNI） | 为了修「STATE 与开关显示不一致」只能每轮都查 | 平时只比**游戏值 vs STATE**；面板（重新）挂载后强制完整核对一轮，另外每 40 个心跳（2s）兜底核对一次 → 省掉 40 倍调用，漂了也能 2 秒内自愈 |
+| 49 | 物品图标**倒立**（药水瓶口朝下），而且金币是**蓝色**的 | 从 `resources.assets` 导图集时漏了两步：Unity 纹理**自下而上**存（PNG 要逐行翻转）、字节序是 **BGRA**（要换 R/B）。旧文档只把矩形 y 换成 `图高-Y-H`，那只修对了**位置**、没修**内容** | 修素材本身（`物品图标/修正图集.py`：翻转 + 换通道），脚本里裁剪回到朴素 `(X, Y, X+W, Y+H)`；验证别再用剑/锤这种上下近似对称的图标，用**药水瓶/金币**这种一眼能看出的 |
+| 50 | 换了图集文件，游戏里还是旧图标 | 脚本优先读**游戏私有缓存** `cache/dsha_atlas_N.png`，`warm()` 见到文件已存在就直接跳过 | 起 `图标HTTP服务.py` → 游戏里 `TERRARIA_SYS_MENU.icon.warm(true)` 强制重下 → **重载脚本**（内存里已解码的 `pages[]` 也要换掉）。核对办法：Frida 里用 `MessageDigest` 算缓存文件 md5 与本地文件比对 |

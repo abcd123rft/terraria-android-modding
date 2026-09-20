@@ -20,7 +20,7 @@ Android 16）用的**可复用技能包 + 能直接跑的修改器菜单**。包
 | [`skill/SKILL.md`](skill/SKILL.md) | 主技能（中文）：环境与通道、按名字操作 il2cpp、每帧效果的正确挂法、功能配方、菜单设计、图标流水线、抗更新 |
 | [`skill/SKILL.en.md`](skill/SKILL.en.md) | 英文版（带 YAML frontmatter，可当 agent 技能加载） |
 | [`skill/FRESHNESS.md`](skill/FRESHNESS.md) | 时效性台账：验证日期、目标版本、哪些常量会过期、怎么重建、三步自检 |
-| [`skill/reference/pitfalls.md`](skill/reference/pitfalls.md) | **34 条实测坑**：现象 → 真因 → 修法（含把游戏打崩的栈溢出事故） |
+| [`skill/reference/pitfalls.md`](skill/reference/pitfalls.md) | **50 条实测坑**：现象 → 真因 → 修法（含把游戏打崩的栈溢出事故） |
 | [`skill/reference/menu-implementation.md`](skill/reference/menu-implementation.md) | 可直接抄的代码模式：tag 分发、面板骨架、自适应高度、虚拟列表、图标裁剪、天气同步、无子弹 |
 | [`menu/terraria-mod-menu.js`](menu/terraria-mod-menu.js) | ⭐ 现成修改器菜单（约 280KB）：6 个标签页、图标网格+搜索、9 个事件开关、武器改造、虚拟列表 |
 | [`menu/MENU-MANUAL.zh-CN.md`](menu/MENU-MANUAL.zh-CN.md) | 菜单使用说明（功能清单 / 布局 / 性能 / 更新应对） |
@@ -64,6 +64,27 @@ python3 ../tools/jshook.py exec --file terraria-mod-menu.js --sub "selfTest: fal
   （key 默认 `/root/.dsh/jshook_key`，可用 `JSHOOK_KEY_FILE` 覆盖）。
 - Python 3；离线解包另需 `lz4`、`Pillow`、`texture2ddecoder`。
 - 菜单按国服包名写，其他版本用 `jshook.py --package` 指定。
+
+## 更新记录（新的在上）
+
+**v1.2.4**
+- **图标素材修正**：从 `resources.assets` 导出图集时漏了两步 —— Unity 纹理**自下而上**存（要逐行翻转）、
+  字节序是 **BGRA**（要换 R/B）。表现是**所有物品图标倒立、金币发蓝**。旧做法（把矩形 y 换成 `图高−Y−H`）
+  只把图块**位置**找对了、没修内容，而当时验证用的是铁阔剑/铁锤这类**上下近似对称**的图标，所以一直没暴露。
+  现在用 `tools/fix_atlas_orientation.py` 直接修素材，脚本里裁剪回到朴素 `(X, Y, X+W, Y+H)`。
+  验证图标方向请用**药水瓶**（瓶口朝上）或**金币**（金色），别用剑/锤。
+- 换图集后记得刷游戏侧缓存：本地起服务 → 游戏里 `TERRARIA_SYS_MENU.icon.warm(true)` → 重载脚本。
+
+**v1.2.3**
+- **性能优化**（均为实测）：物品面板再次打开 133ms → **1.6ms**、背包页再次进入 53ms → **9ms**、
+  背包刷新 1.24ms → **0.50ms**、数字键盘 26.7ms → **6.8ms**、单次字段写入 4.40µs → **1.70µs**。
+  两件事贡献最大：① **字段按缓存偏移直读直写**（`il2cpp_field_get_offset` + 直接读写内存，
+  首次用官方 API 对拍、不一致自动退回慢路径）；② **Android 视图只建一次、复用**（一次 Java 调用实测
+  0.13–0.28ms，重建 120 个视图就是 100ms+）。另外全部开关关闭时两个每帧钩子直接短路，空闲开销≈0。
+
+**v1.2.2**
+- 背包页：从**弹药格**打开物品面板只列弹药、从**钱币格**只列钱币（ID 集合离线压成区间串内嵌，
+  与分类/搜索叠加生效）。
 
 ## 版权与合规（重要）
 

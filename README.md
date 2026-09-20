@@ -21,9 +21,9 @@ system UI** (touches never fall through the game), and how to **extract item ico
 | [`skill/SKILL.md`](skill/SKILL.md) | Main skill (Chinese): environment & channels, il2cpp-by-name technique, correct per-frame hooking, feature recipes, menu design, icon pipeline, update resilience |
 | [`skill/SKILL.en.md`](skill/SKILL.en.md) | The same skill in English (with YAML frontmatter — load it as an agent skill) |
 | [`skill/FRESHNESS.md`](skill/FRESHNESS.md) | Freshness ledger: verified-on date, target build, which constants go stale, how to rebuild, 3-step self check |
-| [`skill/reference/pitfalls.md`](skill/reference/pitfalls.md) | 34 measured pitfalls — symptom → root cause → fix (incl. the crash that a stack overflow from too many dynamic classes causes) |
+| [`skill/reference/pitfalls.md`](skill/reference/pitfalls.md) | 39 measured pitfalls (see also the Chinese list with 50) — symptom → root cause → fix (incl. the crash that a stack overflow from too many dynamic classes causes) |
 | [`skill/reference/menu-implementation.md`](skill/reference/menu-implementation.md) | Copy-paste code patterns: tag dispatch, panel skeleton, auto height, virtual list, icon cropping, weather sync, infinite ammo |
-| [`menu/terraria-mod-menu.js`](menu/terraria-mod-menu.js) | ⭐ Ready-to-run in-game mod menu (~280 KB): 6 tab pages, icon grid with search, 9 event switches, weapon mods, virtual list |
+| [`menu/terraria-mod-menu.js`](menu/terraria-mod-menu.js) | ⭐ Ready-to-run in-game mod menu (~330 KB): 6 tab pages, icon grid with search, 9 event switches, weapon mods, virtual list |
 | [`menu/MENU-MANUAL.zh-CN.md`](menu/MENU-MANUAL.zh-CN.md) | End-user manual for the menu |
 | [`tools/`](tools) | `jshook.py` (injection client) · icon/name-table generators · APK unpacker · Texture2D parser · local icon server |
 
@@ -66,6 +66,31 @@ python3 ../tools/jshook.py exec --file terraria-mod-menu.js --sub "selfTest: fal
   `127.0.0.1:19820` (key at `/root/.dsh/jshook_key`, override with `JSHOOK_KEY_FILE`).
 - Python 3 for the tools. The offline APK pipeline additionally needs `lz4`, `Pillow` and `texture2ddecoder`.
 - The menu is written for the CN build's package name; for another build pass `--package` to `jshook.py`.
+
+## Changelog (latest first)
+
+**v1.2.4**
+- **Icon atlas fix**: the atlases extracted from `resources.assets` were missing two conversion steps —
+  Unity textures are stored **bottom-up** (needs a row flip) and the bytes may be **BGRA** (needs an R/B swap).
+  Result: every item icon was **upside down** and gold coins looked **blue**. The earlier workaround
+  (cropping at `H−Y−H`) only fixed the *position*, never the content — and it survived review because the
+  icons used for verification (swords, hammers) are near-symmetric vertically. Fixed at the asset level with
+  `tools/fix_atlas_orientation.py`; the menu now crops plain `(X, Y, X+W, Y+H)`. Verify icon orientation with a
+  **potion bottle** (neck up) or a **coin** (gold), never with a sword.
+- Remember to refresh the game-side cache after swapping atlases: serve them, call
+  `TERRARIA_SYS_MENU.icon.warm(true)`, then reload the script.
+
+**v1.2.3**
+- **Performance pass** (measured): reopening the item picker 133 ms → **1.6 ms**, bag page re-entry 53 ms → **9 ms**,
+  bag scan 1.24 ms → **0.50 ms**, number pad 26.7 ms → **6.8 ms**, one field write 4.40 µs → **1.70 µs**.
+  Two changes did most of the work: (1) **field access by cached offset** (`il2cpp_field_get_offset` + direct
+  memory read/write, verified once against the official API with automatic fallback), and (2) **build Android
+  views once and reuse them** (a single Java call costs 0.13–0.28 ms, so rebuilding 120 views = 100 ms+).
+  Idle cost is now ~0: `playerIdle()` short-circuits both per-frame hooks when every switch is off.
+
+**v1.2.2**
+- Bag page: opening the item picker from an **ammo** slot lists only ammo, from a **coin** slot only coins
+  (ID sets compressed offline into range strings; search and category filters still compose).
 
 ## Legal / fair use
 

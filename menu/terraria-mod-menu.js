@@ -835,6 +835,7 @@ var UI = (function () {
           tabBar.addView(tb);
         })(pageDefs[pi], pi === 0);
       }
+      S.tabBtns = tabBtns;                       // 便于自检/调试直接点标签切页
       if (pageDefs.length) panel.addView(tabBar);
 
       /* 滚动区 */
@@ -1567,17 +1568,23 @@ var UI = (function () {
 
   function bagBuild() {
     var K = S.ctx; if (!K || BAG.built) return;
+    /* ⚠ 防重入：建格过程中会调用 Java.registerClass（建监听器类）等**耗时 Java 调用**，
+       Frida 的 JS 运行时在这些调用期间会被 Java 线程重入（例如 350ms 轮询的 bagRefresh），
+       那时 BAG.built 还没置位 → 会再进一次建格，两套网格交错叠在一起
+       （实测日志：两次「建格开始」交错 + 两次「建格完成」格子数 97/108）。
+       所以必须用一个「进行中」标记，进入时立刻置位。 */
+    if (BAG.inProgress) { log('背包：建格正在进行，跳过这次重入'); return; }
+    BAG.inProgress = true;
     var juse = K.juse, act = K.act, dp = K.dp, WRAP = -2, MATCH = -1;
     var LL = juse('android.widget.LinearLayout'), TV = juse('android.widget.TextView'),
         IV = juse('android.widget.ImageView'), IVS = juse('android.widget.ImageView$ScaleType'),
         LLP = juse('android.widget.LinearLayout$LayoutParams'), GR = juse('android.view.Gravity');
     var host = S.groups['bag-grid'];
-    if (!host) { log('背包：找不到 bag-grid 容器'); return; }
-    /* 关键：先清空容器再建。任何原因导致 bagBuild 被调用第二次（重入/页面重复进入/守卫失效），
-       否则会在下面再叠一整套标题+网格 —— 用户看到的就是「上面 4 块空白分区，下面 4 块有内容」。 */
-    try { host.removeAllViews(); } catch (e) { err('清空背包容器', e); }
+    if (!host) { BAG.inProgress = false; log('背包：找不到 bag-grid 容器'); return; }
     BAG.builds = (BAG.builds || 0) + 1;
-    if (BAG.builds > 1) log('背包：警告——建格被调用第 ' + BAG.builds + ' 次（已清空重建）');
+    log('背包：建格开始（第 ' + BAG.builds + ' 次，host现有子节点 ' + host.getChildCount() + '，built=' + BAG.built + '）');
+    /* 关键：先清空容器再建 —— 否则重复调用会在下面再叠一整套标题+网格 */
+    try { host.removeAllViews(); } catch (e) { err('清空背包容器', e); }
     var N = bagSlots(), ICON_PX = dp(38);
     BAG.tiles = [];
     BAG_GROUPS.forEach(function (g) {
@@ -1621,7 +1628,10 @@ var UI = (function () {
       }
     });
     BAG.built = true;
-    log('背包：已建 ' + BAG.tiles.length + ' 格（真实槽位 ' + N + '，分 ' + BAG_GROUPS.length + ' 区）');
+    BAG.inProgress = false;
+    BAG.host = host;
+    BAG.expectChildren = host.getChildCount();
+    log('背包：建格完成（第 ' + BAG.builds + ' 次，格子 ' + BAG.tiles.length + '，host子节点 ' + BAG.expectChildren + '）');
   }
 
   function bagRead() {
@@ -1642,7 +1652,14 @@ var UI = (function () {
   }
 
   function bagRefresh(force) {
-    if (!BAG.built) bagBuild();
+    /* 自愈：容器换了、或子节点数对不上（说明被重复建过/被外部改过）→ 重建一次（建格是幂等的） */
+    var h = S.groups['bag-grid'];
+    if (!BAG.built || !h || BAG.host !== h || h.getChildCount() !== BAG.expectChildren) {
+      if (BAG.inProgress) return;                 // 正在建格就别插手
+      if (h && BAG.built) log('背包：结构异常（子节点 ' + h.getChildCount() + ' ≠ 期望 ' + BAG.expectChildren + '）→ 自动重建');
+      BAG.built = false;
+      bagBuild();
+    }
     if (!BAG.tiles.length) return;
     var snap = bagRead(), changed = 0;
     for (var i = 0; i < BAG.tiles.length; i++) {
@@ -1804,7 +1821,13 @@ var UI = (function () {
     promptNumber: promptNumber, pickItem: pickItem, showPage: showPage, post: postMain, S: S,
     bagBuild: bagBuild, bagRefresh: bagRefresh, bagSelect: bagSelect, bagSlot: bagSlot, bagItem: bagItem,
     bagSlots: function () { return bagSlots(); }, bagSelect: bagSelect, bagTap: bagTap, bagClosePopup: bagClosePopup,
-    bagPopup: bagPopup };
+    bagPopup: bagPopup,
+    bagDebug: function () {
+      var h = S.groups['bag-grid'];
+      return { built: BAG.built, builds: BAG.builds || 0, tiles: BAG.tiles.length,
+               hostChildren: h ? h.getChildCount() : -1, expect: BAG.expectChildren,
+               sameHost: BAG.host === h, inProgress: !!BAG.inProgress, sel: BAG.sel, hasPopup: !!BAG.popup };
+    } };
 })();
 
 /* ═════════════════════════ 持续效果（ResetEffects Hook） ═════════════════════════ */
@@ -2807,6 +2830,7 @@ else {
                                    toggle: UI.toggleCollapse, post: UI.post, num: UI.promptNumber, selfTest: selfTest,
                                    bag: { build: UI.bagBuild, refresh: UI.bagRefresh, select: UI.bagSelect,
                                           slot: UI.bagSlot, item: UI.bagItem, slots: UI.bagSlots,
-                                          tap: UI.bagTap, popup: UI.bagPopup, close: UI.bagClosePopup } };
+                                          tap: UI.bagTap, popup: UI.bagPopup, close: UI.bagClosePopup,
+                                          debug: UI.bagDebug } };
   log('系统 API 版菜单脚本已执行（host=' + CFG.host + '）');
 }

@@ -58,3 +58,8 @@
 | 32 | 容器里 `ls /data/data/<pkg>` 读不到 | 该路径在容器命名空间下不可见 | 用游戏进程自己列（Frida 里 `File.listFiles()`），或 `/data/user/0/...` |
 | 33 | 截屏被拦 | `screencap` 属未列入白名单的设备命令（返回 `POLICY_BLOCKED`） | 用 `/app/ui/screenshot`（需无障碍服务）或让用户自己截图 |
 | 34 | 探针脚本里 `window.__x` 不生效 | Frida 脚本环境没有 `window` | 用 `globalThis.__x` |
+| 35 | ⚠️ 改物品数量「写进去了但没生效」，日志出现 `无字段 stack` | 用了**只写 Player** 的 `setF(obj,name,v)` 写 Item 字段（内部固定按 `Player` 类查名字） | 写物品字段用 `setOn(IL.Item, item, name, v)`；写完**回读校验** |
+| 36 | 关闭「无子弹发射」后弹药数量不还原 | 旧版心跳里还挂着 `IL.topUpAmmo()`（把每种弹药补到最大堆叠 9999），和新的「基准数量追踪」打架 | 移除旧逻辑；基准追踪：开启记基准、打掉补回、捡到抬基准、关闭写回基准 |
+| 37 | 读背包格读到**大负数** `type`（垃圾指针） | 槽位写死 60，而本移植版 `Player.inventory` 只有 **59** 格（0–58） | 运行时读数组长度 `arr.add(0x18).readS32()` 再夹住循环 |
+| 38 | 模块级函数调用 UI 内部的辅助函数报 `ReferenceError: 'bagSlots' is not defined` | 辅助函数定义在 UI 模块（IIFE）里，模块级作用域看不到 | 统一走 `UI.xxx()`（连踩三处）；调试入口 `TERRARIA_SYS_MENU.bag.*` |
+| 39 | 天气开关「跟随游戏状态」后雨再也不停 | 自动同步点亮的开关也走了「每帧复写」= 无限维持 | 加 `auto` 标记：跟随=不维持（自然停→开关自动灭），用户自己点开才维持；**修 UI 时不要动这个标记** |

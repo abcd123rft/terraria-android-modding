@@ -139,6 +139,9 @@ use `setTimeout` (the Frida JS thread).
 | Weapon edits | set `Item.damage/crit/useTime/shootSpeed/mana`; **on=write+remember original, off=restore**; revert = `SetDefaults(type,false)` |
 | Held weapon | `Player.lastHotbarItem` (**this port has no `selectedItem`**) + `inventory`; `useAmmo>0` means ranged |
 | Item name | `Terraria.Lang.GetItemNameValue(id)` via `runtime_invoke` — **~10 ms per call**, use an offline name table instead |
+| **Inventory CRUD** | slot count **read at runtime** (this port: **59** slots = 0–9 hotbar / 10–49 main / 50–58 coins+ammo; `arr.add(0x18).readS32()`); read = per-slot `type/stack`; add = `SetDefaults(id,false)` + `stack` (clamp by `Item.maxStack`); delete = `SetDefaults(0,false)`; modify = rewrite `stack` / copy to an empty slot / overwrite via the item picker; refresh with **dirty checks** (only update changed tiles) |
+| Weather "follow vs hold" | when syncing, **also compare the switch's real checked state** (comparing internal state alone misses UI repairs); tag auto-synced switches so they *don't* hold the weather (it may end naturally → switch turns off), while user-opened ones re-assert every frame; turning off = stop this round immediately + 2.5 s mute |
+| Infinite-ammo traps | item fields must be written with `setOn(IL.Item,…)`; never leave the legacy `topUpAmmo()` running (it forces stacks to 9999 and fights the base tracking) |
 
 ## 6. Mod-menu design (Android system-UI version)
 
@@ -214,7 +217,7 @@ Overlays (item picker / number pad) are another `addContentView` with their own 
 7. **Name table**: `Lang.GetItemNameValue` costs ~10 ms/call (24 tiles = 300 ms lag) → generate `ITEM_NAMES` offline
    (`脚本/生成名称表.py`, ids 0..6265), zero runtime calls, runtime lookup only as fallback.
 
-## 8. Pitfall quick list (full list: `参考/踩坑清单.md`, 34 entries)
+## 8. Pitfall quick list (full list: `参考/踩坑清单.md`, 39 entries)
 
 - Frida wrapper traps: `Java.use` detached loses `this`; `findViewById()` returns `android.view.View` (needs `Java.cast`);
   `getParent()` returns a `ViewParent` (no `removeView`/`getHeight`).
@@ -239,7 +242,7 @@ Overlays (item picker / number pad) are another `addContentView` with their own 
 SKILL.md / SKILL.en.md   this file (Chinese / English)
 版本与时效.md             verified-on dates, game build, which numbers go stale and how to rebuild
 README.md                how to use this package (shortest paths)
-参考/踩坑清单.md           34 measured pitfalls (symptom → cause → fix)
+参考/踩坑清单.md           39 measured pitfalls (symptom → cause → fix)
 参考/菜单实现细节.md       copy-paste code patterns (tag dispatch, virtual list, weather sync, …)
 成品/系统菜单.js           ready-to-run mod menu (~285 KB, icon + name tables embedded)
 成品/面板说明.md           end-user manual for the menu

@@ -69,6 +69,14 @@ python3 ../tools/jshook.py exec --file terraria-mod-menu.js --sub "selfTest: fal
 
 ## Changelog (latest first)
 
+**v1.2.5**
+- New **"Paths & configuration"** section (manual §10, SKILL.md §11, this README): exactly what to edit when you move
+  the assets or the scripts — only two constants live inside the game process (atlas fallback `DIR`, atlas HTTP `HTTP`),
+  container-side tools take env vars (`ICON_DIR`, `ICON_LOG`, `JSHOOK_URL`, `JSHOOK_KEY_FILE`, `--package`, `TASSETS`,
+  `ICON_DST`), and five scripts have a single hardcoded path each (their comments state the expected layout), plus a
+  four-step self check. The game-side cache path is computed at runtime via `getCacheDir()`, so changing device or
+  package name needs no edit.
+
 **v1.2.4**
 - **Icon atlas fix**: the atlases extracted from `resources.assets` were missing two conversion steps —
   Unity textures are stored **bottom-up** (needs a row flip) and the bytes may be **BGRA** (needs an R/B swap).

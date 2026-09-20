@@ -67,6 +67,13 @@ python3 ../tools/jshook.py exec --file terraria-mod-menu.js --sub "selfTest: fal
 
 ## 更新记录（新的在上）
 
+**v1.2.5**
+- 新增**「路径与配置」章节**（中文手册第十节 + SKILL.md 第 11 节 + 本 README）：换目录/换设备时
+  要改哪些东西一目了然 —— 游戏进程内只有 2 个常量（图集本地回退目录 `DIR`、图集 HTTP 地址 `HTTP`），
+  容器侧脚本优先用环境变量（`ICON_DIR`/`ICON_LOG`/`JSHOOK_URL`/`JSHOOK_KEY_FILE`/`--package`/`TASSETS`/`ICON_DST`），
+  剩下 5 个脚本各只有一行硬编码路径（注释里写了它期望的目录关系），外加「改完四步自检」的命令。
+  另外说明：游戏私有缓存路径由脚本 `getCacheDir()` 现算，**换设备/换包名都不用改**。
+
 **v1.2.4**
 - **图标素材修正**：从 `resources.assets` 导出图集时漏了两步 —— Unity 纹理**自下而上**存（要逐行翻转）、
   字节序是 **BGRA**（要换 R/B）。表现是**所有物品图标倒立、金币发蓝**。旧做法（把矩形 y 换成 `图高−Y−H`）

@@ -1759,8 +1759,11 @@ var UI = (function () {
     }
     addRow([['⚠清空背包', 'bag-clear', true], ['关闭', '__bag-close']]);
     /* 弹在格子旁边：用格子的屏幕坐标 */
+    /* ⚠ 坐标系必须和浮层一致：addContentView 的浮层原点是**窗口内容视图**，
+       而 getLocationOnScreen 返回的是含系统栏/挖孔的屏幕坐标 → 直接用会整体偏移（实测差 ~160px）。
+       所以用 getLocationInWindow。 */
     var loc = Java.array('int', [0, 0]);
-    try { BAG.tiles[slot].cell.getLocationOnScreen(loc); } catch (e) {}
+    try { BAG.tiles[slot].cell.getLocationInWindow(loc); } catch (e) {}
     var sw = 0, sh = 0;
     try {
       var dm = act.getResources().getDisplayMetrics();
@@ -1769,10 +1772,22 @@ var UI = (function () {
     /* 弹窗位置：贴在被点格子的**右上**（默认）或**左上**（右边放不下时）；
        下面/上面都放不下时再退化成「格子下方」。坐标一律用**格子相对面板**的实际布局算。 */
     var boxW = dp(168);
-    var boxH = (box.getChildCount() * dp(32)) + dp(18);        // 按行数估算（每行约 32dp）
+    /* 先量一次真实高度再定位 —— 估算（行数×32dp）会比实际高不少，导致弹窗被顶到离格子很远 */
+    var boxH = 0;
+    try {
+      var VS = juse('android.view.View$MeasureSpec');
+      box.measure(VS.makeMeasureSpec(boxW, 1073741824 /*EXACTLY*/), VS.makeMeasureSpec(0, 0 /*UNSPECIFIED*/));
+      boxH = box.getMeasuredHeight();
+    } catch (e) {}
+    if (!boxH || boxH <= 0) boxH = (box.getChildCount() * dp(32)) + dp(18);
     var cellW = 0, cellH = 0;
-    try { cellW = BAG.tiles[slot].cell.getWidth(); cellH = BAG.tiles[slot].cell.getHeight(); } catch (e) {}
-    var m = dp(4), side = '';
+    try {
+      cellW = BAG.tiles[slot].cell.getWidth();
+      cellH = BAG.tiles[slot].cell.getHeight();
+      if (!cellW) cellW = dp(56);
+      if (!cellH) cellH = dp(64);
+    } catch (e) {}
+    var m = dp(2), side = '';
     var x = loc[0] + cellW + m;                                 // 右上：左边界贴格子右边
     var y = loc[1] - boxH - m;                                  //       底边界贴格子顶边
     side = '右上';
@@ -1788,7 +1803,8 @@ var UI = (function () {
     try { act.addContentView(root, FLP.$new(MATCH, MATCH)); } catch (e) { err('背包弹窗', e); }
     BAG.popup = { root: root, close: bagClosePopup };
     log('背包：槽' + slot + ' 操作弹窗（' + side + '：格子@' + loc[0] + ',' + loc[1] + ' ' + cellW + '×' + cellH +
-        ' → 弹窗@' + Math.round(x) + ',' + Math.round(y) + ' ' + boxW + '×' + Math.round(boxH) + '）');
+        ' → 弹窗@' + Math.round(x) + ',' + Math.round(y) + ' ' + boxW + '×' + boxH +
+        '，弹窗底边 ' + Math.round(y + boxH) + ' vs 格子顶边 ' + loc[1] + (side.indexOf('下方') >= 0 ? '' : ('，缝 ' + Math.round(loc[1] - (y + boxH)))) + '）');
   }
   function bagSlot() { return BAG.sel; }
   function bagItem() {

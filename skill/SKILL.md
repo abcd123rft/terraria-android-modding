@@ -134,14 +134,6 @@ Update → UpdateSocialShadow → UpdateImmunity → ResetEffects → UpdateBuff
 
 ### 4.2 心跳（50ms setInterval）
 适合：状态类字段的复写（天气）、背包扫描（无子弹发射）、时间条同步、手持武器轮询。
-
-**性能上真正要盯的两件事**（实测 2026-09-20）：
-1. **一次 Java 调用 ≈ 0.13–0.28ms** —— 界面重复创建才是卡顿主因（重建 120 个 View = 100ms+）。
-   弹层/列表/键盘一律「建一次复用」；`setText`/`setBackground`/`isChecked` 全部做「值没变就不碰 View」，
-   去重标记记在 **View 自己身上**（`v.__txt`），别记在按 id 的模块级 map（面板重挂后会误判成已设置）。
-2. **字段访问别每次进 il2cpp**（2–4µs/次）—— 用 `il2cpp_field_get_offset` 取偏移后
-   `p.add(off).writeFloat(v)` 直读直写（1.4µs，零 il2cpp 调用）；每个字段**首次**直读时用官方 API 对拍一次，
-   不一致就永久退回慢路径。负缓存必须用 `ck in cache` 判断（`if (cache[ck])` 对 null/false 永远判假）。
 重活（网络、批量裁图）**不要放主线程**：主线程做网络会抛 `android.os.NetworkOnMainThreadException`，
 放到 `setTimeout`（Frida 脚本线程）里做。
 
@@ -173,7 +165,7 @@ Update → UpdateSocialShadow → UpdateImmunity → ResetEffects → UpdateBuff
 | 武器改造 | 改 `Item.damage/crit/useTime/shootSpeed/mana` 等；**开=写入并记原值，关=写回原值**；恢复原厂 = `SetDefaults(type,false)` |
 | 读手持武器 | `Player.lastHotbarItem`（**本移植版没有 `selectedItem`**）+ `inventory` 数组；`useAmmo>0` 是远程 |
 | 物品名 | `Terraria.Lang.GetItemNameValue(id)`（`runtime_invoke`）；**别每条都调**（~10ms/次），离线名表优先 |
-| **背包操作（增删改查）** | 槽位**按数组真实长度**（本移植版 **59** 格：0–9 快捷栏 / 10–49 主背包 / 50–58 钱币弹药，`arr.add(0x18).readS32()`）；查=逐格读 `type/stack`；增=`SetDefaults(id,false)`+`stack`（按 `Item.maxStack` 封顶）；删=`SetDefaults(0,false)`；改=改写 `stack`/复制到空格/用物品面板覆盖；刷新用**脏检查**（只更新变了的格子）。**类型化筛选**：弹药格（54–57）只列弹药、钱币格（50–53）只列钱币——弹药/钱币 ID 集合从物品表离线生成**区间串**内嵌脚本（约 250 字符），运行时按区间判成员，零文件读取；筛选与分类/搜索叠加 |
+| **背包操作（增删改查）** | 槽位**按数组真实长度**（本移植版 **59** 格：0–9 快捷栏 / 10–49 主背包 / 50–58 钱币弹药，`arr.add(0x18).readS32()`）；查=逐格读 `type/stack`；增=`SetDefaults(id,false)`+`stack`（按 `Item.maxStack` 封顶）；删=`SetDefaults(0,false)`；改=改写 `stack`/复制到空格/用物品面板覆盖；刷新用**脏检查**（只更新变了的格子） |
 | 天气「跟随 vs 维持」 | 同步时**同时比对开关真实勾选状态**（只比内部 STATE 会漏补 UI）；用 `auto` 标记区分「跟随游戏」（不维持，自然停→开关自动灭）与「用户点开」（每帧复写=无限维持）；关闭=立刻停本轮 + 2.5s 静默期 |
 | 无子弹发射的坑 | 写物品字段只能用 `setOn(IL.Item,…)`；**别同时留旧版 `topUpAmmo()`**（它把弹药补到 9999，和基准追踪打架） |
 
@@ -284,3 +276,47 @@ SKILL.md                 ← 本文件（主技能）
 数据/物品矩形表.json(_补充) ← ID → 图集页/X/Y/宽/高
 图集在 /sdcard/Download/DSHA/terraria_icons/（atlas_0.png / atlas_1.png，2048²）
 ```
+
+## 11. 路径与配置速查（换目录 / 换设备只改这些）
+
+**原则**：游戏进程内只有 **2 个常量**；容器侧脚本**优先用环境变量/参数**，剩下 5 个脚本是「改一行」的绝对/相对路径。
+
+### 11.1 游戏进程内的菜单脚本（`成品/系统菜单.js`）
+
+| 常量 | 默认 | 说明 |
+|---|---|---|
+| `ICON` 的 `var DIR` | `/sdcard/Download/DSHA/terraria_icons/atlas_` | 图集**本地回退**（第③优先；游戏通常读不到 `/sdcard/Download`，分区存储） |
+| `ICON` 的 `var HTTP` | `http://127.0.0.1:8899/atlas_` | 图集 **HTTP 来源**（第②优先）→ 端口要和 `图标HTTP服务.py` 一致 |
+| 私有缓存路径 | `/data/user/0/<包名>/cache/dsha_atlas_N.png` | 图集**首选**（第①优先）→ **不用改**，脚本用 `getCacheDir()` 现算 |
+| `CFG.widthDp/startXDp/startYDp/heightRatio` | `250/12/36/0.60` | 换分辨率跨度大的设备（平板/折叠屏）时调 |
+
+### 11.2 支持环境变量/参数的脚本（不用改代码）
+
+`图标HTTP服务.py`：`ICON_DIR`（图集目录，默认 `/sdcard/Download/DSHA/terraria_icons`）、端口（第 1 个参数，默认 8899）、`ICON_LOG`
+`jshook.py`：`JSHOOK_URL`（默认 `http://127.0.0.1:19820/mcp`）、`JSHOOK_KEY_FILE`（默认 `/root/.dsh/jshook_key`）、`--package`（默认 `com.xd.terraria`）、`--file`（菜单路径，现传）
+`构建图标表.py` / `补别名图标.py`：`TASSETS`（解包 assets）、`ICON_DST`（图集输出目录）
+`修正图集.py`：命令行传文件名
+
+### 11.3 写死路径、挪了就要改一行的脚本
+
+| 脚本 | 那行 | 期望结构 |
+|---|---|---|
+| `注入图标表.py` | `MENU = ../控制面板/系统菜单.js` | `脚本/` 与 `控制面板/` 同级；矩形表 json 放脚本同目录 |
+| `生成名称表.py` | `CSV = ../物品库/out/terraria_items_all.csv`、`MENU = ../控制面板/系统菜单.js` | `控制面板/`、`物品库/` 同级 |
+| `补别名图标.py` | `MENU_DIR`、`CSV`、`ASSETS(TASSETS)` | 同上 |
+| `extract_bundle.py` | `BUNDLE`、`OUT` = `/root/DshaWorks/unpack/...` | 解包目录（绝对路径，换机器必改） |
+| `publish_to_github.py` | `REPO_DIR`、`ZIP_DIR` | 本地仓库与压缩包目录 |
+
+> 不想改代码就照原样摆：`控制面板/`、`物品库/`、`脚本/`（或 `物品图标/`）几个同级目录。
+
+### 11.4 换完之后的自检
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8899/atlas_0.png     # ① 图集服务通不通
+python3 jshook.py exec --file /你的路径/系统菜单.js --wait 8                     # ② 下发
+# ③ 日志应出现：图标：图集 0 就绪 …（来源 私有缓存/HTTP，不是「不可用」）
+# ④ 游戏里点「背包」→ 点一格 → 图标在不在；不在就回到 ①
+```
+
+**换设备/换包名**：菜单脚本、矩形表、名称表都不用改（脚本自己找 `Assembly-CSharp.dll`、自己算缓存路径），
+只改 `jshook.py --package` 和观感参数。**换游戏版本**：路径不用动，`构建图标表.py` 的 `DB_OFFSET` 要重搜（见 `版本与时效.md`）。

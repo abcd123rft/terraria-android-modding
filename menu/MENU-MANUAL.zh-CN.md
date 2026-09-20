@@ -492,3 +492,82 @@ art::ClassLoaderContext::EncodeContextInternal ↔ EncodeSharedLibAndParent   �
   脚本本身不用改。
 - **随时自检**：`python3 jshook.py exec --file 系统菜单.js --sub "selfTest: false||selfTest: true"`
   会跑一遍全量自检（属性/武器/事件/图标/布局）并写日志。
+
+## 十、换目录 / 换设备：要改哪些地方
+
+**一句话**：路径分两类 —— **游戏进程内**只有 2 个常量要改；**容器侧脚本**优先用环境变量/命令行参数，
+只有「按相对目录找文件」的 4 个脚本需要保持目录结构（或者改它那一行）。
+
+### 10.1 菜单脚本 `系统菜单.js`（在游戏进程里跑）
+
+| 位置 | 默认值 | 作用 | 要怎么改 |
+|---|---|---|---|
+| `ICON` 里的 `var DIR` | `/sdcard/Download/DSHA/terraria_icons/atlas_` | 图集**本地回退**路径（第③优先，设备上直接 `decodeFile`） | 改成你放图集的目录；**注意游戏进程多半读不到 `/sdcard/Download`**（分区存储），这条路通常拿不到图，真正管用的是下面两条 |
+| `ICON` 里的 `var HTTP` | `http://127.0.0.1:8899/atlas_` | 图集 **HTTP 来源**（第②优先） | 改 `127.0.0.1`/端口，**必须和 `图标HTTP服务.py` 起的端口一致** |
+| 私有缓存路径 | `/data/user/0/<包名>/cache/dsha_atlas_N.png` | 图集**首选来源**（第①优先，拉一次就长期用） | **不用改**：由脚本在游戏进程里用 `getCacheDir()` 现算，换包名/换设备都自动对 |
+| `CFG.marker` | `dsha_terraria_menu_v1` | 重载时清理上一次残留面板 | 一般不用改（多套面板并存时才需要区分） |
+| `CFG.widthDp` / `startXDp` / `startYDp` / `heightRatio` | `250 / 12 / 36 / 0.60` | 面板宽度、起始位置、滚动区高度 | 换**分辨率差别大**的设备（平板/折叠屏）时按需调 |
+
+> 图集来源顺序是 **①游戏私有缓存 → ②HTTP 服务 → ③本地文件**，前一条拿不到才走下一条；
+> 三条都不通 → 选择物品自动退回**纯文字列表**（功能不受影响，只是没图标）。
+
+### 10.2 容器侧脚本（在你的 Linux 工作区里跑）
+
+**A. 已经支持环境变量/参数的（不用改代码）**
+
+| 脚本 | 变量 / 参数 | 默认值 | 含义 |
+|---|---|---|---|
+| `图标HTTP服务.py` | `ICON_DIR` | `/sdcard/Download/DSHA/terraria_icons` | 对外提供的图集目录 |
+| `图标HTTP服务.py` | 第 1 个命令行参数 | `8899` | 端口 → **要和菜单里的 `HTTP` 一致** |
+| `图标HTTP服务.py` | `ICON_LOG` | `/tmp/dsha_icon_log.txt` | `/log?m=` 落盘文件 |
+| `jshook.py` | `JSHOOK_URL` | `http://127.0.0.1:19820/mcp` | JsHook MCP 地址 |
+| `jshook.py` | `JSHOOK_KEY_FILE` | `/root/.dsh/jshook_key` | MCP key 文件 |
+| `jshook.py` | `--package` | `com.xd.terraria` | 目标包名（换游戏/换服就传它） |
+| `jshook.py` | `--file` | — | 菜单脚本路径，**每次下发时现传**，脚本本身不写死 |
+| `构建图标表.py` | `TASSETS` | `/root/DshaWorks/unpack/resources.assets` | 解包出来的 assets |
+| `构建图标表.py` | `ICON_DST` | `/sdcard/Download/DSHA/terraria_icons` | 图集输出目录 → **要和上面 `ICON_DIR`、菜单 `DIR` 一致** |
+| `补别名图标.py` | `TASSETS` | 同上 | 同上 |
+| `修正图集.py` | 命令行参数 | — | `python3 修正图集.py 图集1.png 图集2.png`，不写死路径 |
+
+例：
+```bash
+# 图集放在别处 + 换端口（两处要对上）
+ICON_DIR=/sdcard/MyMod/icons python3 图标HTTP服务.py 9000
+# 菜单里同步改成： var HTTP = 'http://127.0.0.1:9000/atlas_';  var DIR = '/sdcard/MyMod/icons/atlas_';
+TASSETS=/sdcard/MyMod/unpack/resources.assets ICON_DST=/sdcard/MyMod/icons python3 构建图标表.py
+```
+
+**B. 靠「相对目录」找文件、挪了位置就要改的（每个只有一行）**
+
+| 脚本 | 写死的那行 | 期望的目录关系 |
+|---|---|---|
+| `注入图标表.py` | `MENU = ../控制面板/系统菜单.js` | `脚本/` 与 `控制面板/` 同级；矩形表 `物品矩形表.json`、`物品矩形表_补充.json` 放脚本同目录 |
+| `生成名称表.py` | `CSV = ../物品库/out/terraria_items_all.csv`、`MENU = ../控制面板/系统菜单.js` | `物品库/`、`控制面板/`、`物品库脚本目录/` 同级 |
+| `补别名图标.py` | `MENU_DIR = ../控制面板`、`CSV = ../物品库/out/terraria_items_all.csv` | 同上 |
+| `extract_bundle.py` | `BUNDLE = /root/DshaWorks/unpack/data.unity3d`、`OUT = /root/DshaWorks/unpack` | 解包目录（**绝对路径，换机器必改**） |
+| `publish_to_github.py` | `REPO_DIR`、`ZIP_DIR` | 本地 git 仓库目录、压缩包所在目录 |
+
+> 这些脚本都是「改一行就行」，注释里也标了它期望的结构；
+> 不想改代码就把目录照原样摆（`控制面板/`、`物品库/`、`脚本/`、`物品图标/` 四个同级目录）。
+
+### 10.3 换完之后怎么确认没漏
+
+```bash
+# ① 图集能不能取到（服务在跑就有 200）
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8899/atlas_0.png
+
+# ② 下发菜单（--file 指到你现在的路径）
+python3 jshook.py exec --file /你的路径/系统菜单.js --wait 8
+
+# ③ 看日志里这两行（来源应该是「私有缓存」或「HTTP」，不是「不可用」）
+#    [系统菜单] 图标：图集 0 就绪 2048×2048（来源 私有缓存）
+#    [系统菜单] 预热完成：物品面板已预建
+
+# ④ 游戏里点「背包」→ 随便点一格 → 看图标在不在；不在就按 ①→② 顺序查
+```
+
+**换了设备/换了游戏包名**：菜单脚本、矩形表、名称表**都不用改**（脚本在游戏进程里自己找
+`Assembly-CSharp.dll`、自己算私有缓存路径）；只要改 `jshook.py --package`，以及 `CFG.widthDp` 这类观感参数。
+
+**换了游戏版本**：路径不用动，但 `构建图标表.py` 的 `DB_OFFSET`（矩形表在 assets 里的偏移）会变，
+见第九节。

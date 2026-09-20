@@ -107,16 +107,6 @@ Update → UpdateSocialShadow → UpdateImmunity → ResetEffects → UpdateBuff
 
 ### 4.2 Heartbeat (50 ms `setInterval`)
 For state re-assertion (weather), inventory scans (infinite ammo), seek-bar sync, held-weapon polling.
-
-**The two things that actually matter for performance** (measured 2026-09-20):
-1. **One Java call costs 0.13-0.28 ms** on this bridge — rebuilding 120 views = 100 ms+, so UI reuse beats micro-tuning.
-   Build overlays/lists/keypads once and `show()`/`hide()` them; never call `setText`/`setBackground`/`isChecked`
-   when the value is unchanged, and store that "already set" marker **on the View itself** (`v.__txt`) — a module-level
-   map keyed by node id goes stale when the panel is re-mounted and leaves labels blank.
-2. **Never enter il2cpp per field access** (2-4 us each): cache `il2cpp_field_get_offset` and read/write
-   `p.add(off)` directly (1.4 us, zero il2cpp calls). Verify each field once against the official API getter and
-   fall back to the slow path on mismatch. Negative caching needs `ck in cache` — `if (cache[ck])` is always false for
-   a cached null/false.
 Heavy work (network, bitmap crops) must **not** run on the main thread (`NetworkOnMainThreadException`) —
 use `setTimeout` (the Frida JS thread).
 
@@ -148,11 +138,6 @@ use `setTimeout` (the Frida JS thread).
 | Spawn item | `Item.SetDefaults(id,false)` into an empty inventory slot (prefer hotbar 0–9), `Item.stack` for count |
 | Weapon edits | set `Item.damage/crit/useTime/shootSpeed/mana`; **on=write+remember original, off=restore**; revert = `SetDefaults(type,false)` |
 | Held weapon | `Player.lastHotbarItem` (**this port has no `selectedItem`**) + `inventory`; `useAmmo>0` means ranged |
-| Slot-kind filtering | Ammo slots (54–57) list only ammo, coin slots (50–53) only coins: compress the ID set from the item table into a **range string** embedded in the script (~250 chars) and test membership by range at runtime — no file reads |
-| Icon atlas export | Unity textures are stored **bottom-up** and the bytes may be **BGRA**: a converter that
-skips the row flip and the R/B swap yields **upside-down icons with blue gold coins**. The old workaround (crop at
-`H-Y-H`) only fixed the *position*, not the content — verify icon orientation with a **potion bottle / coin**, never with
-a sword or hammer (they are near-symmetric, so a flip looks fine). Fix the asset instead, then crop `(X, Y, X+W, Y+H)`. |
 | Item name | `Terraria.Lang.GetItemNameValue(id)` via `runtime_invoke` — **~10 ms per call**, use an offline name table instead |
 | **Inventory CRUD** | slot count **read at runtime** (this port: **59** slots = 0–9 hotbar / 10–49 main / 50–58 coins+ammo; `arr.add(0x18).readS32()`); read = per-slot `type/stack`; add = `SetDefaults(id,false)` + `stack` (clamp by `Item.maxStack`); delete = `SetDefaults(0,false)`; modify = rewrite `stack` / copy to an empty slot / overwrite via the item picker; refresh with **dirty checks** (only update changed tiles) |
 | Weather "follow vs hold" | when syncing, **also compare the switch's real checked state** (comparing internal state alone misses UI repairs); tag auto-synced switches so they *don't* hold the weather (it may end naturally → switch turns off), while user-opened ones re-assert every frame; turning off = stop this round immediately + 2.5 s mute |
@@ -265,3 +250,17 @@ README.md                how to use this package (shortest paths)
 数据/                      item rect tables (6085 + 148 alias entries)
 atlas PNGs live in /sdcard/Download/DSHA/terraria_icons/
 ```
+
+## 11. Paths & configuration (what to edit when you move things)
+
+- **Inside the game process** only two constants matter: `var DIR` (fallback atlas folder) and `var HTTP`
+  (atlas HTTP server URL — its port must match `icon_http_server.py`) in the ready-to-run menu script.
+  The *preferred* atlas source is the game's private cache, whose path is computed at runtime via
+  `getCacheDir()` — never hardcode it.
+- **Container-side tools** take env vars / arguments first: `ICON_DIR`, `ICON_LOG`, port (icon server);
+  `JSHOOK_URL`, `JSHOOK_KEY_FILE`, `--package` (jshook client); `TASSETS`, `ICON_DST` (icon/name-table builders).
+- **Five scripts with a single hardcoded path** (`inject_icon_table.py`, `gen_name_table.py`,
+  `fix_alias_icons.py`, `extract_bundle.py`, `publish_to_github.py`) — each has one line to edit, and the
+  comment states the layout it expects; otherwise keep `控制面板/`, `物品库/`, `脚本/` as siblings.
+- Self-check after moving: `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8899/atlas_0.png`,
+  push the script, then confirm the log shows `图标：图集 0 就绪 …（来源 私有缓存/HTTP）`.

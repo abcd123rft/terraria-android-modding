@@ -86,6 +86,20 @@ python3 ../tools/jshook.py exec --file terraria-mod-menu.js --sub "selfTest: fal
 - 背包页：从**弹药格**打开物品面板只列弹药、从**钱币格**只列钱币（ID 集合离线压成区间串内嵌，
   与分类/搜索叠加生效）。
 
+## 路径配置（换目录/换设备必读）
+
+- **游戏进程内**只有 2 个常量要改：`menu/terraria-mod-menu.js` 里 `ICON` 的 `var DIR`（图集本地回退目录）
+  与 `var HTTP`（图集 HTTP 服务地址，端口要和 `tools/icon_http_server.py` 一致）。
+  图集**首选**来源是游戏私有缓存，路径由脚本 `getCacheDir()` 现算，不用改。
+- **容器侧脚本**优先用环境变量：`ICON_DIR`、`ICON_LOG`、`JSHOOK_URL`、`JSHOOK_KEY_FILE`、`--package`、
+  `TASSETS`、`ICON_DST`。
+- **写死路径的 5 个脚本**（`inject_icon_table.py`、`gen_name_table.py`、`fix_alias_icons.py`、
+  `extract_bundle.py`、`publish_to_github.py`）各只有一行，注释里写了期望的目录关系。
+- 改完自检：`curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8899/atlas_0.png` → 下发脚本 →
+  日志出现「图标：图集 0 就绪 …（来源 私有缓存/HTTP）」。
+
+**完整清单**（每个常量、每个脚本改哪一行、目录结构要求、四步自检）见 `menu/MENU-MANUAL.zh-CN.md` 第十节。
+
 ## 版权与合规（重要）
 
 - **本仓库不含任何游戏素材**：两张图集、物品名/矩形表等提取物都不入库；脚本面向**你自己合法拥有的游戏副本**运行

@@ -1700,7 +1700,7 @@ var UI = (function () {
   /* 只选中（放入物品后调用，不弹操作窗） */
   function bagSelect(slot) { BAG.sel = slot; bagRefresh(true); }
   /* 点格子：选中 + 在旁边弹操作按钮 */
-  function bagTap(slot) { bagSelect(slot); bagPopup(slot); }
+  function bagTap(slot) { log('背包：点格子 ' + slot); bagSelect(slot); bagPopup(slot); }
   function bagClosePopup() {
     var p = BAG.popup; BAG.popup = null;
     if (!p) return;
@@ -1718,6 +1718,10 @@ var UI = (function () {
         FLP = juse('android.widget.FrameLayout$LayoutParams'), LLP = juse('android.widget.LinearLayout$LayoutParams'),
         V = juse('android.view.View'), GD = juse('android.graphics.drawable.GradientDrawable');
     var root = FL.$new(act);
+    /* ⚠ 必须打上菜单标记：脚本重载时 sweep() 靠它清掉残留浮层。
+       漏了这一步 → 弹窗会一直留在屏幕上（全屏透明层）**吞掉所有点击**，
+       表现为「点弹窗按钮/面板都没反应」。 */
+    root.setContentDescription(jStr(CFG.marker));
     var dim = V.$new(act);                       // 全屏透明层：点空白处关掉
     dim.setLayoutParams(FLP.$new(MATCH, MATCH));
     root.addView(dim);
@@ -1734,8 +1738,11 @@ var UI = (function () {
     /* 两列紧凑排布：竖排 7 个按钮要 780px（占屏 72%），根本贴不到格子旁边 */
     function addRow(pairs) {
       var row = LL.$new(act); row.setOrientation(0); row.setLayoutParams(LLP.$new(MATCH, WRAP));
-      for (var i = 0; i < pairs.length; i++) {
-        var label = pairs[i][0], actionId = pairs[i][1], danger = pairs[i][2];
+      /* ⚠ 必须用 forEach（每个元素独立作用域）：用 for + var 的话闭包会捕获**同一个** actionId，
+         同一行里所有按钮最后都会执行该行**最后一个**动作 —— 表现就是「点『放入/替换』没反应」
+         （它实际执行了同行的『关闭』）。 */
+      pairs.forEach(function (p, i) {
+        var label = p[0], actionId = p[1], danger = p[2];
         var b = BT.$new(act); b.setText(jStr(label)); b.setTextSize(10);
         b.setTextColor(danger ? C.warn : C.text);
         K.compact(b); b.setBackground(K.flat(C.btn));
@@ -1746,7 +1753,7 @@ var UI = (function () {
         b.setLayoutParams(lp);
         K.bindClick(b, function () { bagClosePopup(); try { S.dispatch(actionId); } catch (e) { err('背包操作 ' + actionId, e); } });
         row.addView(b);
-      }
+      });
       box.addView(row);
     }
     var isCoin = (bagGroupOf(slot).kind === 'coin'), isAmmo = (bagGroupOf(slot).kind === 'ammo');
@@ -2400,6 +2407,7 @@ var ACT = {
   },
   'bag-replace': function () {
     var d = (UI.bagSlot() >= 0) ? { slot: UI.bagSlot() } : null;
+    log('背包：bag-replace 目标槽 = ' + (d ? d.slot : '无'));
     if (!d) return UI.say('先点一个格子（空格也行）再替换');
     UI.pickItem(function (id) {
       var p = IL.player(); if (!p) return;

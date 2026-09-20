@@ -67,7 +67,9 @@ python3 ../tools/jshook.py exec --file terraria-mod-menu.js --sub "selfTest: fal
 
 ## 更新记录（新的在上）
 
-**v1.2.8**
+> 这一版加的「特殊仆从也可多只（实验）」会干扰仆从的形态/AI 分支选择，已按用户要求撤回，菜单行为回到 v1.2.7；相关发现保留在踩坑清单第 53 条。
+
+**v1.2.8（已撤回 / withdrawn）**
 - 「其它」页再加 **特殊仆从也可多只（实验）**：游戏除总数外还用**每类一个布尔字段**记住「已经有这种了」
   （`stardustMinion` 星尘龙 / `palworldFoxsparksMinion` 火绒狐 / `twinsMinion` / `spiderMinion` … 共 14 个，
   用 `il2cpp_class_get_fields` 枚举 Player 字段表挖出来的），这个开关把它们每帧清 false。

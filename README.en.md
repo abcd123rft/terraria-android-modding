@@ -69,7 +69,9 @@ python3 ../tools/jshook.py exec --file terraria-mod-menu.js --sub "selfTest: fal
 
 ## Changelog (latest first)
 
-**v1.2.8**
+> 这一版加的「特殊仆从也可多只（实验）」会干扰仆从的形态/AI 分支选择，已按用户要求撤回，菜单行为回到 v1.2.7；相关发现保留在踩坑清单第 53 条。
+
+**v1.2.8 (withdrawn)**
 - New experimental switch **"allow multiple special minions"**: besides the total cap, the game remembers
   "already have one of this type" in **per-type boolean fields** (`stardustMinion`, `palworldFoxsparksMinion`,
   `twinsMinion`, `spiderMinion`, …, 14 in total, found by enumerating the Player field table with

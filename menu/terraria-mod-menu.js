@@ -1525,6 +1525,136 @@ var UI = (function () {
     refreshList(true);
   }
 
+  /* ═════════ 背包操作（读 / 增 / 删 / 改） ═════════
+     背包槽位固定（0-9 快捷栏、10-49 主背包、50-57 钱币弹药），所以不用虚拟列表：
+     进页面时懒建 60 个格子，之后只更新「内容变了的格子」（脏检查，避免每帧刷 60 个 View）。 */
+  var BAG = { built: false, sel: -1, host: null, tiles: [], last: null, t: 0 };
+
+  /* 背包槽位数：按 inventory 数组真实长度（本移植版实测 59 → 槽 0..58） */
+  function bagSlots() {
+    try {
+      var p = IL.player(); if (!p) return 0;
+      var n = IL.invArr(p).add(0x18).readS32();
+      return (n > 0 && n <= 60) ? n : 50;
+    } catch (e) { return 50; }
+  }
+  function bagBuild() {
+    var K = S.ctx; if (!K || BAG.built) return;
+    var juse = K.juse, act = K.act, dp = K.dp, WRAP = -2, MATCH = -1;
+    var LL = juse('android.widget.LinearLayout'), TV = juse('android.widget.TextView'),
+        IV = juse('android.widget.ImageView'), IVS = juse('android.widget.ImageView$ScaleType'),
+        LLP = juse('android.widget.LinearLayout$LayoutParams'), GR = juse('android.view.Gravity');
+    var host = S.groups['bag-grid'];
+    if (!host) { log('背包：找不到 bag-grid 容器，未建格子'); return; }
+    var TILE_BG = K.flat(C.btn), SEL_BG = K.flatOn(C.btn);
+    var ICON_PX = dp(40);
+    BAG.tiles = [];
+    for (var r = 0; r < 15; r++) {                      // 15 行 × 4 列 = 60 格
+      var row = LL.$new(act); row.setOrientation(0); row.setLayoutParams(LLP.$new(MATCH, WRAP));
+      for (var c = 0; c < 4; c++) {
+        var slot = r * 4 + c;
+        var t = { slot: slot };
+        var cell = LL.$new(act); cell.setOrientation(1); cell.setGravity(GR.CENTER_HORIZONTAL.value);
+        var lp = LLP.$new(0, WRAP, 1.0);
+        lp.leftMargin.value = dp(2); lp.rightMargin.value = dp(2); lp.bottomMargin.value = dp(2);
+        cell.setLayoutParams(lp); cell.setBackground(TILE_BG);
+        cell.setPadding(dp(2), dp(2), dp(2), dp(2));
+        var iv = IV.$new(act); iv.setScaleType(IVS.FIT_CENTER.value);
+        iv.setLayoutParams(LLP.$new(MATCH, ICON_PX));
+        cell.addView(iv);
+        var ph = TV.$new(act); ph.setTextSize(13); ph.setTextColor(C.sub);
+        ph.setGravity(GR.CENTER.value); ph.setLayoutParams(LLP.$new(MATCH, ICON_PX));
+        ph.setText(jStr('+'));
+        cell.addView(ph);
+        var tv = TV.$new(act); tv.setTextSize(9); tv.setTextColor(C.text);
+        tv.setGravity(GR.CENTER.value); tv.setMaxLines(1); tv.setLayoutParams(LLP.$new(MATCH, WRAP));
+        cell.addView(tv);
+        var nv = TV.$new(act); nv.setTextSize(8); nv.setTextColor(C.sub);
+        nv.setGravity(GR.CENTER.value); nv.setMaxLines(1); nv.setLayoutParams(LLP.$new(MATCH, WRAP));
+        cell.addView(nv);
+        t.cell = cell; t.iv = iv; t.ph = ph; t.tv = tv; t.nv = nv;
+        K.bindClick(cell, (function (tt) {
+          return function () { bagSelect(tt.slot); };
+        })(t));
+        BAG.tiles.push(t);
+        row.addView(cell);
+      }
+      host.addView(row);
+    }
+    var N = bagSlots();
+    for (var k = N; k < BAG.tiles.length; k++) { try { BAG.tiles[k].cell.setVisibility(8); } catch (e) {} }
+    BAG.built = true;
+    log('背包：已建格子（真实槽位 ' + N + ' 个 / 网格 ' + BAG.tiles.length + '）');
+  }
+
+  /* 读一次游戏背包，返回 [{slot, type, stack, name}] */
+  function bagRead() {
+    var out = [];
+    try {
+      var p = IL.player(); if (!p) return out;
+      var arr = IL.invArr(p), N = bagSlots();
+      for (var i = 0; i < N; i++) {
+        var it = IL.slotItem(arr, i);
+        if (!it || it.isNull()) { out.push({ slot: i, type: 0, stack: 0, name: '' }); continue; }
+        var ty = IL.getOn(IL.Item, it, 'type') | 0;
+        var st = ty ? (IL.getOn(IL.Item, it, 'stack') | 0) : 0;
+        out.push({ slot: i, type: ty, stack: st, name: ty ? itemNameFast(ty) : '' });
+      }
+    } catch (e) { err('读背包', e); }
+    return out;
+  }
+
+  /* 只更新「变了的」格子（脏检查） */
+  function bagRefresh(force) {
+    if (!BAG.built) bagBuild();
+    var snap = bagRead(), changed = 0;
+    if (!BAG.tiles.length) return;
+    for (var i = 0; i < BAG.tiles.length; i++) {
+      var t = BAG.tiles[i], d = snap[i];
+      if (!d) continue;
+      var sig = d.type + '|' + d.stack + '|' + (BAG.sel === i ? 1 : 0);
+      if (!force && t.sig === sig) continue;
+      t.sig = sig; changed++;
+      if (d.type > 0) {
+        var bm = null; try { bm = ICON.bitmap(d.type, dp2px(40)); } catch (e) {}
+        if (bm) { t.iv.setImageBitmap(bm); t.iv.setVisibility(0); t.ph.setVisibility(8); }
+        else { t.iv.setVisibility(8); t.ph.setText(jStr('ID')); t.ph.setVisibility(0); }
+        var nm = d.name || ('#' + d.type);
+        t.tv.setText(jStr(nm.length > 5 ? nm.slice(0, 5) + '…' : nm));
+        t.nv.setText(jStr('槽' + d.slot + (d.stack > 1 ? (' ×' + d.stack) : '')));
+      } else {
+        t.iv.setVisibility(8); t.ph.setText(jStr('+')); t.ph.setVisibility(0);
+        t.tv.setText(jStr('空'));
+        t.nv.setText(jStr('槽' + d.slot));
+      }
+      try { t.cell.setBackground(BAG.sel === i ? SEL_BG : TILE_BG); } catch (e) {}
+    }
+    BAG.last = snap;
+    if (changed) log('背包：刷新 ' + changed + ' 个格子（选中槽 ' + BAG.sel + '）');
+    bagInfo();
+  }
+  function dp2px(v) { try { return Math.round(v * S.act.getResources().getDisplayMetrics().density.value); } catch (e) { return v * 3; } }
+
+  function bagSelect(slot) {
+    BAG.sel = slot;
+    bagRefresh(true);
+  }
+  function bagInfo() {
+    var d = BAG.last && BAG.last[BAG.sel];
+    var n = 0;
+    if (BAG.last) for (var i = 0; i < BAG.last.length; i++) if (BAG.last[i].type > 0) n++;
+    var txt = '背包共 ' + n + ' 件';
+    if (BAG.sel < 0) txt += '　· 点下面的格子选中';
+    else if (d && d.type > 0) txt += '　· 选中 槽' + BAG.sel + '：' + (d.name || '#' + d.type) + ' ×' + d.stack + '（id ' + d.type + '）';
+    else txt += '　· 选中 槽' + BAG.sel + '（空，点「增加物品」放进去）';
+    UI.setLabel('bag-info', txt);
+  }
+  function bagSlot() { return BAG.sel; }
+  function bagItem() {
+    var d = BAG.last && BAG.last[BAG.sel];
+    return (d && d.type > 0) ? d : null;
+  }
+
   function mount(spec, dispatch, onReady) {
     if (typeof Java === 'undefined' || !Java.available) { log('Frida Java 桥不可用，无法建立系统菜单'); return; }
     Java.perform(function () {
@@ -1547,7 +1677,9 @@ var UI = (function () {
 
   return { mount: mount, close: close, say: say, toggleCollapse: toggleCollapse,
     setLabel: setLabel, setImage: setImage, setButton: setButton, setVisible: setVisible, setSwitch: setSwitch, setSeek: setSeek,
-    promptNumber: promptNumber, pickItem: pickItem, showPage: showPage, post: postMain, S: S };
+    promptNumber: promptNumber, pickItem: pickItem, showPage: showPage, post: postMain, S: S,
+    bagBuild: bagBuild, bagRefresh: bagRefresh, bagSelect: bagSelect, bagSlot: bagSlot, bagItem: bagItem,
+    bagSlots: function () { return bagSlots(); } };
 })();
 
 /* ═════════════════════════ 持续效果（ResetEffects Hook） ═════════════════════════ */
@@ -2048,7 +2180,90 @@ var ACT = {
       UI.say('添加数量已设为 ' + STATE.itemCount);
     });
   },
-  'item-add': function () { addItem(STATE.itemCount || 1); },
+  /* ═════ 背包操作（查 / 增 / 删 / 改） ═════ */
+  'bag-refresh': function () { UI.bagRefresh(true); UI.say('背包已刷新'); },
+  /* 增加物品 = 选物品 → 输入数量 → 放进「选中的空格」或第一个空格 */
+  'bag-add': function () { ACT['item-add'](); },
+  'item-add': function () {
+    UI.pickItem(function (id) {
+      STATE.itemId = id; updateItemInfo();
+      UI.promptNumber('添加数量', STATE.itemCount, function (n) {
+        n = Math.max(1, n | 0); STATE.itemCount = n;
+        UI.setLabel('item-count', '数量：' + n);
+        UI.say(bagGive(id, n));
+        UI.bagRefresh(true);
+      });
+    });
+  },
+  'bag-count': function () {
+    var d = UI.bagItem(); if (!d) return UI.say('先选中一个有物品的格子');
+    UI.promptNumber('修改数量（当前 ' + d.stack + '）', d.stack, function (n) {
+      n = Math.max(1, n | 0);
+      var p = IL.player(), arr = IL.invArr(p), it = IL.slotItem(arr, d.slot);
+      var max = IL.getOn(IL.Item, it, 'maxStack') | 0;
+      if (max > 1 && n > max) n = max;
+      IL.setOn(IL.Item, it, 'stack', max > 1 ? n : 1);
+      UI.bagRefresh(true);
+      log('[背包] 槽' + d.slot + ' 数量 → ' + n);
+      UI.say('槽' + d.slot + ' 数量已改为 ' + n);
+    });
+  },
+  'bag-del': function () {
+    var d = UI.bagItem(); if (!d) return UI.say('先选中一个有物品的格子');
+    var p = IL.player(); if (!p) return;
+    IL.call(IL.slotItem(IL.invArr(p), d.slot), IL.Item, 'SetDefaults', [IL.intArg(0), IL.boolArg(false)]);
+    UI.bagRefresh(true);
+    log('[背包] 删除 槽' + d.slot + '：' + d.name);
+    UI.say('已删除 槽' + d.slot + '：' + d.name + ' ×' + d.stack);
+  },
+  'bag-copy': function () {
+    var d = UI.bagItem(); if (!d) return UI.say('先选中一个有物品的格子');
+    var p = IL.player(); if (!p) return;
+    var arr = IL.invArr(p), N = UI.bagSlots(), target = -1;
+    for (var i = 0; i < N; i++) {
+      if (i === d.slot) continue;
+      var x = IL.slotItem(arr, i); if (!x || x.isNull()) continue;
+      if ((IL.getOn(IL.Item, x, 'type') | 0) === 0) { target = i; break; }
+    }
+    if (target < 0) return UI.say('没有空格可放');
+    var cell = IL.slotItem(arr, target);
+    IL.call(cell, IL.Item, 'SetDefaults', [IL.intArg(d.type), IL.boolArg(false)]);
+    IL.setOn(IL.Item, cell, 'stack', d.stack);
+    UI.bagSelect(target);
+    UI.bagRefresh(true);
+    UI.say('已复制到 槽' + target);
+  },
+  'bag-replace': function () {
+    var d = (UI.bagSlot() >= 0) ? { slot: UI.bagSlot() } : null;
+    if (!d) return UI.say('先点一个格子（空格也行）再替换');
+    UI.pickItem(function (id) {
+      var p = IL.player(); if (!p) return;
+      var it = IL.slotItem(IL.invArr(p), d.slot);
+      IL.call(it, IL.Item, 'SetDefaults', [IL.intArg(id), IL.boolArg(false)]);
+      IL.setOn(IL.Item, it, 'stack', 1);
+      UI.bagRefresh(true);
+      log('[背包] 槽' + d.slot + ' 替换为 ' + itemNameFast(id));
+      UI.say('槽' + d.slot + ' 已替换为 ' + itemNameFast(id));
+    });
+  },
+  'bag-clear': function () {
+    if (!BAG_CLEAR_ARMED) {
+      BAG_CLEAR_ARMED = setTimeout(function () { BAG_CLEAR_ARMED = null; }, 5000);
+      return UI.say('⚠ 再点一次「清空背包」确认（5 秒内有效）');
+    }
+    clearTimeout(BAG_CLEAR_ARMED); BAG_CLEAR_ARMED = null;
+    var p = IL.player(); if (!p) return;
+    var arr = IL.invArr(p), N = UI.bagSlots(), n = 0;
+    for (var i = 0; i < N; i++) {
+      var it = IL.slotItem(arr, i); if (!it || it.isNull()) continue;
+      if ((IL.getOn(IL.Item, it, 'type') | 0) === 0) continue;
+      IL.call(it, IL.Item, 'SetDefaults', [IL.intArg(0), IL.boolArg(false)]);
+      n++;
+    }
+    UI.bagRefresh(true);
+    log('[背包] 清空：删除了 ' + n + ' 格');
+    UI.say('已清空背包（删除 ' + n + ' 格）');
+  },
 
   'w-dmg-set': function () {
     UI.promptNumber('伤害增量', STATE.dmgAdd, function (v) {
@@ -2180,6 +2395,7 @@ function onPageEnter(id) {
     else if (id === 'pg-weapon') { ACT['w-read'](); try { refreshModUI(STATE.slot); } catch (e) {} }
     else if (id === 'pg-time') { syncTimeFromGame(true); }
     else if (id === 'pg-event') { syncWeather(); }
+    else if (id === 'pg-item') { UI.bagBuild(); UI.bagRefresh(true); }
   } catch (e) { err('进入页 ' + id, e); }
 }
 /* 时间条跟随游戏当前时间（只在时间页、且用户没在拖动时刷新） */
@@ -2194,6 +2410,35 @@ function syncTimeFromGame(force) {
     UI.setLabel('time-info', '时间 ' + fmtTime(day, t) + (STATE.timeLock ? '（锁定中）' : '（跟随游戏）'));
   } catch (e) {}
 }
+
+/* 把物品放进「选中格（若为空）」或第一个空格 */
+function bagGive(id, n) {
+  try {
+    var p = IL.player(); if (!p) return '没有活跃角色';
+    var arr = IL.invArr(p), N = UI.bagSlots(), sel = UI.bagSlot(), target = -1;   // bagSlots 在 UI 模块里
+    if (sel >= 0) {
+      var si = IL.slotItem(arr, sel);
+      if (si && !si.isNull() && (IL.getOn(IL.Item, si, 'type') | 0) === 0) target = sel;
+    }
+    if (target < 0) {
+      for (var i = 0; i < N; i++) {
+        var x = IL.slotItem(arr, i); if (!x || x.isNull()) continue;
+        if ((IL.getOn(IL.Item, x, 'type') | 0) === 0) { target = i; break; }
+      }
+    }
+    if (target < 0) return '背包已满，先「删除该格」腾位置';
+    var cell = IL.slotItem(arr, target);
+    IL.call(cell, IL.Item, 'SetDefaults', [IL.intArg(id), IL.boolArg(false)]);
+    var max = IL.getOn(IL.Item, cell, 'maxStack') | 0;
+    var cnt = (max > 1) ? Math.min(n, max) : 1;
+    IL.setOn(IL.Item, cell, 'stack', cnt);
+    UI.bagSelect(target);
+    log('[背包] 增加 槽' + target + '：' + itemNameFast(id) + ' ×' + cnt);
+    return '已放入 槽' + target + '：' + itemNameFast(id) + ' ×' + cnt;
+  } catch (e) { err('放入背包', e); return '放入失败：' + e; }
+}
+var BAG_CLEAR_ARMED = null;
+try { globalThis.__bagGive = function (id, n) { return bagGive(id, n); }; } catch (e) {}   // 测试钩子
 
 function addItem(n) {
   var id = STATE.itemId || 1;
@@ -2285,11 +2530,16 @@ var SPEC = [
     { k: 'row', items: [{ id: 't-day', label: '设白天' }, { id: 't-night', label: '设夜晚' }] }
   ] },
 
-  { k: 'page', id: 'pg-item', label: '物品', open: false, items: [
-    { k: 'iconrow', id: 'item-info', size: 44, text: '物品 —', click: 'item-pick' },
+  { k: 'page', id: 'pg-item', label: '背包', open: false, items: [
+    { k: 'text', id: 'bag-info', text: '背包：—' },
+    { k: 'row', items: [{ id: 'bag-refresh', label: '刷新背包' }, { id: 'bag-add', label: '＋ 增加物品' }] },
+    { k: 'row', items: [{ id: 'bag-count', label: '改数量' }, { id: 'bag-del', label: '删除该格' }] },
+    { k: 'row', items: [{ id: 'bag-copy', label: '复制该格' }, { id: 'bag-replace', label: '替换为…' }] },
+    { k: 'btn', id: 'bag-clear', label: '⚠ 清空背包（点两次确认）' },
+    { k: 'iconrow', id: 'item-info', size: 40, text: '待添加：—', click: 'item-pick' },
     { k: 'text', id: 'item-count', text: '数量：1' },
-    { k: 'row', items: [{ id: 'item-count-set', label: '改数量' }, { id: 'item-add', label: '★ 添加到背包' }] },
-    { k: 'note', text: '点上面的物品图标 → 弹出物品面板（顶部横向分类 + 搜索框用系统输入法）；数量用面板内置键盘改；添加时优先放快捷栏。' }
+    { k: 'group', id: 'bag-grid', open: true, items: [] },
+    { k: 'note', text: '点下面的格子选中（空格也能选中，「增加物品」会放进这一格）；「替换为…」选完物品覆盖当前格；「改数量」用内置数字键盘。' }
   ] },
 
   { k: 'page', id: 'pg-misc', label: '其它', open: false, items: [
@@ -2407,7 +2657,16 @@ else {
     }, CFG.tickMs));
 
     /* 轮询手持武器种类，决定面板上显示哪一组选项 */
-    globalThis.TERRARIA_SYS_MENU_TIMERS.push(setInterval(function () { try { pollHeld(); } catch (e) {} }, CFG.pollMs));
+    globalThis.TERRARIA_SYS_MENU_TIMERS.push(setInterval(function () {
+      try { pollHeld(); } catch (e) {}
+      /* 停在「背包」页时每秒刷新一次（脏检查，只更新变了的格子） */
+      try {
+        if (UI.S.activePage === 'pg-item') {
+          var now = Date.now();
+          if (now - (globalThis.__bagT || 0) > 1000) { globalThis.__bagT = now; UI.bagRefresh(false); }
+        }
+      } catch (e) {}
+    }, CFG.pollMs));
 
     log('系统 API 版菜单已就绪（心跳 ' + CFG.tickMs + 'ms / 轮询 ' + CFG.pollMs + 'ms）');
 
@@ -2424,6 +2683,8 @@ else {
   });
   globalThis.TERRARIA_SYS_MENU = { close: UI.close, say: UI.say, act: ACT, state: STATE, spec: SPEC,
                                    ui: UI.S, il: IL, pick: UI.pickItem, icon: ICON,
-                                   toggle: UI.toggleCollapse, post: UI.post, num: UI.promptNumber, selfTest: selfTest };
+                                   toggle: UI.toggleCollapse, post: UI.post, num: UI.promptNumber, selfTest: selfTest,
+                                   bag: { build: UI.bagBuild, refresh: UI.bagRefresh, select: UI.bagSelect,
+                                          slot: UI.bagSlot, item: UI.bagItem, slots: UI.bagSlots } };
   log('系统 API 版菜单脚本已执行（host=' + CFG.host + '）');
 }

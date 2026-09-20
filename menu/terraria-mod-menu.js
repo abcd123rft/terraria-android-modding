@@ -541,6 +541,7 @@ var UI = (function () {
   function closeOverlays() {
     var a = OVL.slice(); OVL.length = 0;
     for (var i = 0; i < a.length; i++) { try { a[i](); } catch (e) {} }
+    try { if (typeof bagClosePopup === 'function') bagClosePopup(); } catch (e) {}
   }
   var C = {
     panel: argb(0xE6, 0x0E, 0x12, 0x18),
@@ -813,6 +814,7 @@ var UI = (function () {
         for (var k in S.pages) { try { S.pages[k].setVisibility(k === id ? VISIBLE : GONE); } catch (e) {} }
         paintTabs();
         onMain(function () {
+          try { UI.bagClosePopup(); } catch (e) {}
           fitScroll();
           /* 进页时自动做一次「读当前状态」：角色→读属性、武器→读武器、时间→同步时间条 */
           try { if (typeof onPageEnter === 'function') onPageEnter(id); } catch (e) { err('进页钩子', e); }
@@ -1095,6 +1097,7 @@ var UI = (function () {
         act.addContentView(panel, flp); S.mode = 'content';
       }
       S.act = act; S.root = panel; S.status = status; S.parent = contentParent; S.closed = false;
+      S.dispatch = dispatch;                     // 背包弹窗等模块级代码用
       /* 弹层（分类选物品 / 数字键盘）复用这套构建上下文 */
       S.ctx = { act: act, juse: juse, dp: dp, flat: flat, flatOn: flatOn, compact: compact, bindClick: bindClick,
                 widthPx: dp(CFG.widthDp), listPx: dp(Math.max(170, Math.round(shortDp * 0.54))),
@@ -1526,18 +1529,42 @@ var UI = (function () {
   }
 
   /* ═════════ 背包操作（读 / 增 / 删 / 改） ═════════
-     背包槽位固定（0-9 快捷栏、10-49 主背包、50-57 钱币弹药），所以不用虚拟列表：
-     进页面时懒建 60 个格子，之后只更新「内容变了的格子」（脏检查，避免每帧刷 60 个 View）。 */
-  var BAG = { built: false, sel: -1, host: null, tiles: [], last: null, t: 0 };
+     布局：进页面自动刷新一次 → 分区网格（快捷栏 / 主背包 / 钱币 / 弹药 / 其它，不同底色区分）
+           → 点任意格子在该格子**旁边弹出操作按钮**（放入·替换 / 改数量 / 复制 / 删除 / 清空背包）。
+     性能：格子只建一次，之后按「type|stack|选中态」脏检查，只更新变了的格子。 */
+  var BAG = { built: false, sel: -1, tiles: [], last: null, popup: null, t: 0 };
 
-  /* 背包槽位数：按 inventory 数组真实长度（本移植版实测 59 → 槽 0..58） */
+  var BAG_GROUPS = [
+    { kind: 'hotbar', from: 0,  to: 9,  name: '快捷栏（1–0）' },
+    { kind: 'main',   from: 10, to: 49, name: '主背包' },
+    { kind: 'coin',   from: 50, to: 53, name: '钱币格（只能放钱币）' },
+    { kind: 'ammo',   from: 54, to: 57, name: '弹药格（只能放弹药）' },
+    { kind: 'other',  from: 58, to: 58, name: '其它' }
+  ];
+  function bagGroupOf(slot) {
+    for (var i = 0; i < BAG_GROUPS.length; i++) {
+      var g = BAG_GROUPS[i];
+      if (slot >= g.from && slot <= g.to) return g;
+    }
+    return BAG_GROUPS[1];
+  }
   function bagSlots() {
     try {
       var p = IL.player(); if (!p) return 0;
       var n = IL.invArr(p).add(0x18).readS32();
-      return (n > 0 && n <= 60) ? n : 50;
-    } catch (e) { return 50; }
+      return (n > 0 && n <= 60) ? n : 58;
+    } catch (e) { return 58; }
   }
+  function bagBg(kind, sel) {
+    var K = S.ctx; if (!K) return null;
+    if (sel) return K.flatOn(argb(0xFF, 0x33, 0x2A, 0x12));      // 选中：金边
+    if (kind === 'hotbar') return K.flat(argb(0xFF, 0x16, 0x2A, 0x38));
+    if (kind === 'coin')   return K.flat(argb(0xFF, 0x33, 0x2B, 0x12));
+    if (kind === 'ammo')   return K.flat(argb(0xFF, 0x14, 0x2E, 0x22));
+    if (kind === 'other')  return K.flat(argb(0xFF, 0x24, 0x1C, 0x2E));
+    return K.flat(C.btn);
+  }
+
   function bagBuild() {
     var K = S.ctx; if (!K || BAG.built) return;
     var juse = K.juse, act = K.act, dp = K.dp, WRAP = -2, MATCH = -1;
@@ -1545,49 +1572,53 @@ var UI = (function () {
         IV = juse('android.widget.ImageView'), IVS = juse('android.widget.ImageView$ScaleType'),
         LLP = juse('android.widget.LinearLayout$LayoutParams'), GR = juse('android.view.Gravity');
     var host = S.groups['bag-grid'];
-    if (!host) { log('背包：找不到 bag-grid 容器，未建格子'); return; }
-    var TILE_BG = K.flat(C.btn), SEL_BG = K.flatOn(C.btn);
-    var ICON_PX = dp(40);
+    if (!host) { log('背包：找不到 bag-grid 容器'); return; }
+    var N = bagSlots(), ICON_PX = dp(38);
     BAG.tiles = [];
-    for (var r = 0; r < 15; r++) {                      // 15 行 × 4 列 = 60 格
-      var row = LL.$new(act); row.setOrientation(0); row.setLayoutParams(LLP.$new(MATCH, WRAP));
-      for (var c = 0; c < 4; c++) {
-        var slot = r * 4 + c;
-        var t = { slot: slot };
-        var cell = LL.$new(act); cell.setOrientation(1); cell.setGravity(GR.CENTER_HORIZONTAL.value);
-        var lp = LLP.$new(0, WRAP, 1.0);
-        lp.leftMargin.value = dp(2); lp.rightMargin.value = dp(2); lp.bottomMargin.value = dp(2);
-        cell.setLayoutParams(lp); cell.setBackground(TILE_BG);
-        cell.setPadding(dp(2), dp(2), dp(2), dp(2));
-        var iv = IV.$new(act); iv.setScaleType(IVS.FIT_CENTER.value);
-        iv.setLayoutParams(LLP.$new(MATCH, ICON_PX));
-        cell.addView(iv);
-        var ph = TV.$new(act); ph.setTextSize(13); ph.setTextColor(C.sub);
-        ph.setGravity(GR.CENTER.value); ph.setLayoutParams(LLP.$new(MATCH, ICON_PX));
-        ph.setText(jStr('+'));
-        cell.addView(ph);
-        var tv = TV.$new(act); tv.setTextSize(9); tv.setTextColor(C.text);
-        tv.setGravity(GR.CENTER.value); tv.setMaxLines(1); tv.setLayoutParams(LLP.$new(MATCH, WRAP));
-        cell.addView(tv);
-        var nv = TV.$new(act); nv.setTextSize(8); nv.setTextColor(C.sub);
-        nv.setGravity(GR.CENTER.value); nv.setMaxLines(1); nv.setLayoutParams(LLP.$new(MATCH, WRAP));
-        cell.addView(nv);
-        t.cell = cell; t.iv = iv; t.ph = ph; t.tv = tv; t.nv = nv;
-        K.bindClick(cell, (function (tt) {
-          return function () { bagSelect(tt.slot); };
-        })(t));
-        BAG.tiles.push(t);
-        row.addView(cell);
+    BAG_GROUPS.forEach(function (g) {
+      var head = TV.$new(act);
+      head.setText(jStr('▍' + g.name));
+      head.setTextSize(10); head.setTextColor(C.sub);
+      head.setPadding(dp(4), dp(4), dp(4), dp(2));
+      host.addView(head);
+      for (var s = g.from; s <= g.to; s += 4) {                  // 每行 4 格
+        var row = LL.$new(act); row.setOrientation(0); row.setLayoutParams(LLP.$new(MATCH, WRAP));
+        for (var c = 0; c < 4; c++) {
+          var slot = s + c;
+          /* 跨区了或超出真实槽位 → 放占位（保持 4 列对齐，但不建格子、不越界） */
+          if (slot > g.to || slot >= N) {
+            var sp = LL.$new(act); sp.setLayoutParams(LLP.$new(0, WRAP, 1.0)); row.addView(sp); continue;
+          }
+          var t = { slot: slot, kind: g.kind, group: g, cell: null };
+          var cell = LL.$new(act); cell.setOrientation(1); cell.setGravity(GR.CENTER_HORIZONTAL.value);
+          var lp = LLP.$new(0, WRAP, 1.0);
+          lp.leftMargin.value = dp(2); lp.rightMargin.value = dp(2); lp.bottomMargin.value = dp(2);
+          cell.setLayoutParams(lp); cell.setBackground(bagBg(g.kind, false));
+          cell.setPadding(dp(1), dp(2), dp(1), dp(2));
+          var iv = IV.$new(act); iv.setScaleType(IVS.FIT_CENTER.value);
+          iv.setLayoutParams(LLP.$new(MATCH, ICON_PX));
+          cell.addView(iv);
+          var ph = TV.$new(act); ph.setTextSize(12); ph.setTextColor(C.sub);
+          ph.setGravity(GR.CENTER.value); ph.setLayoutParams(LLP.$new(MATCH, ICON_PX));
+          cell.addView(ph);
+          var tv = TV.$new(act); tv.setTextSize(9); tv.setTextColor(C.text);
+          tv.setGravity(GR.CENTER.value); tv.setMaxLines(1); tv.setLayoutParams(LLP.$new(MATCH, WRAP));
+          cell.addView(tv);
+          var nv = TV.$new(act); nv.setTextSize(8); nv.setTextColor(C.sub);
+          nv.setGravity(GR.CENTER.value); nv.setMaxLines(1); nv.setLayoutParams(LLP.$new(MATCH, WRAP));
+          cell.addView(nv);
+          t.cell = cell; t.iv = iv; t.ph = ph; t.tv = tv; t.nv = nv;
+          K.bindClick(cell, (function (tt) { return function () { bagTap(tt.slot); }; })(t));
+          BAG.tiles.push(t);
+          row.addView(cell);
+        }
+        host.addView(row);
       }
-      host.addView(row);
-    }
-    var N = bagSlots();
-    for (var k = N; k < BAG.tiles.length; k++) { try { BAG.tiles[k].cell.setVisibility(8); } catch (e) {} }
+    });
     BAG.built = true;
-    log('背包：已建格子（真实槽位 ' + N + ' 个 / 网格 ' + BAG.tiles.length + '）');
+    log('背包：已建 ' + BAG.tiles.length + ' 格（真实槽位 ' + N + '，分 ' + BAG_GROUPS.length + ' 区）');
   }
 
-  /* 读一次游戏背包，返回 [{slot, type, stack, name}] */
   function bagRead() {
     var out = [];
     try {
@@ -1598,17 +1629,17 @@ var UI = (function () {
         if (!it || it.isNull()) { out.push({ slot: i, type: 0, stack: 0, name: '' }); continue; }
         var ty = IL.getOn(IL.Item, it, 'type') | 0;
         var st = ty ? (IL.getOn(IL.Item, it, 'stack') | 0) : 0;
-        out.push({ slot: i, type: ty, stack: st, name: ty ? itemNameFast(ty) : '' });
+        var am = ty ? (IL.getOn(IL.Item, it, 'ammo') | 0) : 0;
+        out.push({ slot: i, type: ty, stack: st, name: ty ? itemNameFast(ty) : '', ammo: am });
       }
     } catch (e) { err('读背包', e); }
     return out;
   }
 
-  /* 只更新「变了的」格子（脏检查） */
   function bagRefresh(force) {
     if (!BAG.built) bagBuild();
-    var snap = bagRead(), changed = 0;
     if (!BAG.tiles.length) return;
+    var snap = bagRead(), changed = 0;
     for (var i = 0; i < BAG.tiles.length; i++) {
       var t = BAG.tiles[i], d = snap[i];
       if (!d) continue;
@@ -1616,38 +1647,105 @@ var UI = (function () {
       if (!force && t.sig === sig) continue;
       t.sig = sig; changed++;
       if (d.type > 0) {
-        var bm = null; try { bm = ICON.bitmap(d.type, dp2px(40)); } catch (e) {}
+        var bm = null; try { bm = ICON.bitmap(d.type, dp2px(38)); } catch (e) {}
         if (bm) { t.iv.setImageBitmap(bm); t.iv.setVisibility(0); t.ph.setVisibility(8); }
-        else { t.iv.setVisibility(8); t.ph.setText(jStr('ID')); t.ph.setVisibility(0); }
+        else { t.iv.setVisibility(8); t.ph.setText(jStr('?')); t.ph.setVisibility(0); }
         var nm = d.name || ('#' + d.type);
         t.tv.setText(jStr(nm.length > 5 ? nm.slice(0, 5) + '…' : nm));
         t.nv.setText(jStr('槽' + d.slot + (d.stack > 1 ? (' ×' + d.stack) : '')));
       } else {
         t.iv.setVisibility(8); t.ph.setText(jStr('+')); t.ph.setVisibility(0);
-        t.tv.setText(jStr('空'));
+        t.tv.setText(jStr(t.group.kind === 'coin' ? '钱币' : t.group.kind === 'ammo' ? '弹药' : '空'));
         t.nv.setText(jStr('槽' + d.slot));
       }
-      try { t.cell.setBackground(BAG.sel === i ? SEL_BG : TILE_BG); } catch (e) {}
+      try { t.cell.setBackground(bagBg(t.kind, BAG.sel === i)); } catch (e) {}
     }
     BAG.last = snap;
-    if (changed) log('背包：刷新 ' + changed + ' 个格子（选中槽 ' + BAG.sel + '）');
+    if (changed) log('背包：更新 ' + changed + ' 格（选中 ' + BAG.sel + '）');
     bagInfo();
   }
   function dp2px(v) { try { return Math.round(v * S.act.getResources().getDisplayMetrics().density.value); } catch (e) { return v * 3; } }
 
-  function bagSelect(slot) {
-    BAG.sel = slot;
-    bagRefresh(true);
-  }
   function bagInfo() {
-    var d = BAG.last && BAG.last[BAG.sel];
-    var n = 0;
+    var d = BAG.last && BAG.last[BAG.sel], n = 0;
     if (BAG.last) for (var i = 0; i < BAG.last.length; i++) if (BAG.last[i].type > 0) n++;
     var txt = '背包共 ' + n + ' 件';
-    if (BAG.sel < 0) txt += '　· 点下面的格子选中';
-    else if (d && d.type > 0) txt += '　· 选中 槽' + BAG.sel + '：' + (d.name || '#' + d.type) + ' ×' + d.stack + '（id ' + d.type + '）';
-    else txt += '　· 选中 槽' + BAG.sel + '（空，点「增加物品」放进去）';
+    if (BAG.sel < 0) txt += '　· 点格子弹出操作';
+    else if (d && d.type > 0) txt += '　· 槽' + BAG.sel + '：' + (d.name || '#' + d.type) + ' ×' + d.stack + '（id ' + d.type + '）';
+    else txt += '　· 槽' + BAG.sel + '（空）';
     UI.setLabel('bag-info', txt);
+  }
+  /* 只选中（放入物品后调用，不弹操作窗） */
+  function bagSelect(slot) { BAG.sel = slot; bagRefresh(true); }
+  /* 点格子：选中 + 在旁边弹操作按钮 */
+  function bagTap(slot) { bagSelect(slot); bagPopup(slot); }
+  function bagClosePopup() {
+    var p = BAG.popup; BAG.popup = null;
+    if (!p) return;
+    try {
+      var par = S.parent;
+      if (par) par.removeView(p.root); else { var g = p.root.getParent(); if (g) g.removeView(p.root); }
+    } catch (e) {}
+  }
+  function bagPopup(slot) {
+    var K = S.ctx; if (!K) return;
+    bagClosePopup();
+    var juse = K.juse, act = K.act, dp = K.dp, WRAP = -2, MATCH = -1;
+    var FL = juse('android.widget.FrameLayout'), LL = juse('android.widget.LinearLayout'),
+        BT = juse('android.widget.Button'), TV = juse('android.widget.TextView'),
+        FLP = juse('android.widget.FrameLayout$LayoutParams'), LLP = juse('android.widget.LinearLayout$LayoutParams'),
+        V = juse('android.view.View'), GD = juse('android.graphics.drawable.GradientDrawable');
+    var root = FL.$new(act);
+    var dim = V.$new(act);                       // 全屏透明层：点空白处关掉
+    dim.setLayoutParams(FLP.$new(MATCH, MATCH));
+    root.addView(dim);
+    var box = LL.$new(act); box.setOrientation(1);
+    var bg = GD.$new(); bg.setColor(argb(0xF5, 0x12, 0x18, 0x20));
+    bg.setCornerRadius(dp(10)); bg.setStroke(dp(1), C.title);
+    box.setBackground(bg); box.setPadding(dp(6), dp(6), dp(6), dp(6));
+    var d = BAG.last && BAG.last[slot];
+    var title = TV.$new(act);
+    title.setText(jStr('槽' + slot + '　' + (d && d.type > 0 ? ((d.name || ('#' + d.type)).slice(0, 8) + ' ×' + d.stack) : bagGroupOf(slot).name)));
+    title.setTextSize(11); title.setTextColor(C.title);
+    title.setPadding(dp(2), 0, dp(2), dp(4));
+    box.addView(title);
+    function addBtn(label, actionId, danger) {
+      var b = BT.$new(act); b.setText(jStr(label)); b.setTextSize(11);
+      b.setTextColor(danger ? C.warn : C.text);
+      K.compact(b); b.setBackground(K.flat(C.btn));
+      var lp = LLP.$new(MATCH, WRAP); lp.bottomMargin.value = dp(3);
+      b.setLayoutParams(lp);
+      K.bindClick(b, function () { bagClosePopup(); try { S.dispatch(actionId); } catch (e) { err('背包操作 ' + actionId, e); } });
+      box.addView(b);
+      return b;
+    }
+    var isCoin = (bagGroupOf(slot).kind === 'coin'), isAmmo = (bagGroupOf(slot).kind === 'ammo');
+    addBtn(isCoin ? '放入钱币（选物品）' : isAmmo ? '放入弹药（选物品）' : '放入 / 替换物品', 'bag-replace');
+    if (d && d.type > 0) {
+      addBtn('改数量', 'bag-count');
+      addBtn('复制到空格', 'bag-copy');
+      addBtn('删除该格', 'bag-del', true);
+    }
+    addBtn('⚠ 清空整个背包', 'bag-clear', true);
+    addBtn('关闭', '__bag-close');
+    /* 弹在格子旁边：用格子的屏幕坐标 */
+    var loc = Java.array('int', [0, 0]);
+    try { BAG.tiles[slot].cell.getLocationOnScreen(loc); } catch (e) {}
+    var sw = 0, sh = 0;
+    try {
+      var dm = act.getResources().getDisplayMetrics();
+      sw = dm.widthPixels.value; sh = dm.heightPixels.value;
+    } catch (e) {}
+    var boxW = dp(150), maxY = Math.max(0, sh - dp(260));
+    var x = Math.max(dp(4), Math.min(loc[0] + dp(50), sw - boxW - dp(4)));
+    var y = Math.max(dp(4), Math.min(loc[1] + dp(58), maxY));
+    var lp2 = FLP.$new(boxW, WRAP);
+    lp2.leftMargin.value = Math.round(x); lp2.topMargin.value = Math.round(y);
+    root.addView(box, lp2);
+    K.bindClick(dim, function () { bagClosePopup(); });
+    try { act.addContentView(root, FLP.$new(MATCH, MATCH)); } catch (e) { err('背包弹窗', e); }
+    BAG.popup = { root: root, close: bagClosePopup };
+    log('背包：槽' + slot + ' 操作弹窗（位置 ' + Math.round(x) + ',' + Math.round(y) + '）');
   }
   function bagSlot() { return BAG.sel; }
   function bagItem() {
@@ -1679,7 +1777,8 @@ var UI = (function () {
     setLabel: setLabel, setImage: setImage, setButton: setButton, setVisible: setVisible, setSwitch: setSwitch, setSeek: setSeek,
     promptNumber: promptNumber, pickItem: pickItem, showPage: showPage, post: postMain, S: S,
     bagBuild: bagBuild, bagRefresh: bagRefresh, bagSelect: bagSelect, bagSlot: bagSlot, bagItem: bagItem,
-    bagSlots: function () { return bagSlots(); } };
+    bagSlots: function () { return bagSlots(); }, bagSelect: bagSelect, bagTap: bagTap, bagClosePopup: bagClosePopup,
+    bagPopup: bagPopup };
 })();
 
 /* ═════════════════════════ 持续效果（ResetEffects Hook） ═════════════════════════ */
@@ -2182,6 +2281,7 @@ var ACT = {
   },
   /* ═════ 背包操作（查 / 增 / 删 / 改） ═════ */
   'bag-refresh': function () { UI.bagRefresh(true); UI.say('背包已刷新'); },
+  '__bag-close': function () { UI.bagClosePopup(); },
   /* 增加物品 = 选物品 → 输入数量 → 放进「选中的空格」或第一个空格 */
   'bag-add': function () { ACT['item-add'](); },
   'item-add': function () {
@@ -2532,14 +2632,9 @@ var SPEC = [
 
   { k: 'page', id: 'pg-item', label: '背包', open: false, items: [
     { k: 'text', id: 'bag-info', text: '背包：—' },
-    { k: 'row', items: [{ id: 'bag-refresh', label: '刷新背包' }, { id: 'bag-add', label: '＋ 增加物品' }] },
-    { k: 'row', items: [{ id: 'bag-count', label: '改数量' }, { id: 'bag-del', label: '删除该格' }] },
-    { k: 'row', items: [{ id: 'bag-copy', label: '复制该格' }, { id: 'bag-replace', label: '替换为…' }] },
-    { k: 'btn', id: 'bag-clear', label: '⚠ 清空背包（点两次确认）' },
-    { k: 'iconrow', id: 'item-info', size: 40, text: '待添加：—', click: 'item-pick' },
-    { k: 'text', id: 'item-count', text: '数量：1' },
+    { k: 'btn', id: 'bag-refresh', label: '刷新背包（进页面会自动刷一次）' },
     { k: 'group', id: 'bag-grid', open: true, items: [] },
-    { k: 'note', text: '点下面的格子选中（空格也能选中，「增加物品」会放进这一格）；「替换为…」选完物品覆盖当前格；「改数量」用内置数字键盘。' }
+    { k: 'note', text: '背包格按类型分区着色：快捷栏 / 主背包 / 钱币格 / 弹药格。点任意格子 → 在格子旁边弹出操作（放入·替换 / 改数量 / 复制 / 删除 / 清空背包）。' }
   ] },
 
   { k: 'page', id: 'pg-misc', label: '其它', open: false, items: [
@@ -2685,6 +2780,7 @@ else {
                                    ui: UI.S, il: IL, pick: UI.pickItem, icon: ICON,
                                    toggle: UI.toggleCollapse, post: UI.post, num: UI.promptNumber, selfTest: selfTest,
                                    bag: { build: UI.bagBuild, refresh: UI.bagRefresh, select: UI.bagSelect,
-                                          slot: UI.bagSlot, item: UI.bagItem, slots: UI.bagSlots } };
+                                          slot: UI.bagSlot, item: UI.bagItem, slots: UI.bagSlots,
+                                          tap: UI.bagTap, popup: UI.bagPopup, close: UI.bagClosePopup } };
   log('系统 API 版菜单脚本已执行（host=' + CFG.host + '）');
 }

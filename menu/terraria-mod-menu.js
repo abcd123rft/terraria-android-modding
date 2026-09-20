@@ -1749,20 +1749,29 @@ var UI = (function () {
       var dm = act.getResources().getDisplayMetrics();
       sw = dm.widthPixels.value; sh = dm.heightPixels.value;
     } catch (e) {}
-    /* 贴着格子：默认放格子下方，下面放不下就翻到上方（之前固定预留 260dp 会把所有弹窗都夹到同一位置） */
+    /* 弹窗位置：贴在被点格子的**右上**（默认）或**左上**（右边放不下时）；
+       下面/上面都放不下时再退化成「格子下方」。坐标一律用**格子相对面板**的实际布局算。 */
     var boxW = dp(168);
     var boxH = (box.getChildCount() * dp(32)) + dp(18);        // 按行数估算（每行约 32dp）
-    var x = Math.max(dp(4), Math.min(loc[0] + dp(50), sw - boxW - dp(4)));
-    var y = loc[1] + dp(58);
-    if (y + boxH > sh - dp(8)) y = Math.max(dp(4), loc[1] - boxH - dp(8));
-    y = Math.max(dp(4), Math.min(y, Math.max(dp(4), sh - boxH - dp(4))));
+    var cellW = 0, cellH = 0;
+    try { cellW = BAG.tiles[slot].cell.getWidth(); cellH = BAG.tiles[slot].cell.getHeight(); } catch (e) {}
+    var m = dp(4), side = '';
+    var x = loc[0] + cellW + m;                                 // 右上：左边界贴格子右边
+    var y = loc[1] - boxH - m;                                  //       底边界贴格子顶边
+    side = '右上';
+    if (x + boxW > sw - m) { x = loc[0] - boxW - m; side = '左上'; }   // 右边放不下 → 左上
+    if (x < m) x = m;
+    if (y < m) { y = loc[1] + cellH + m; side += '·改下方'; }          // 上面放不下 → 格子下方
+    if (y + boxH > sh - m) y = Math.max(m, sh - boxH - m);
+    if (y < m) y = m;
     var lp2 = FLP.$new(boxW, WRAP);
     lp2.leftMargin.value = Math.round(x); lp2.topMargin.value = Math.round(y);
     root.addView(box, lp2);
     K.bindClick(dim, function () { bagClosePopup(); });
     try { act.addContentView(root, FLP.$new(MATCH, MATCH)); } catch (e) { err('背包弹窗', e); }
     BAG.popup = { root: root, close: bagClosePopup };
-    log('背包：槽' + slot + ' 操作弹窗（格子@' + loc[0] + ',' + loc[1] + ' → 弹窗@' + Math.round(x) + ',' + Math.round(y) + '）');
+    log('背包：槽' + slot + ' 操作弹窗（' + side + '：格子@' + loc[0] + ',' + loc[1] + ' ' + cellW + '×' + cellH +
+        ' → 弹窗@' + Math.round(x) + ',' + Math.round(y) + ' ' + boxW + '×' + Math.round(boxH) + '）');
   }
   function bagSlot() { return BAG.sel; }
   function bagItem() {

@@ -165,7 +165,7 @@ Update → UpdateSocialShadow → UpdateImmunity → ResetEffects → UpdateBuff
 | 武器改造 | 改 `Item.damage/crit/useTime/shootSpeed/mana` 等；**开=写入并记原值，关=写回原值**；恢复原厂 = `SetDefaults(type,false)` |
 | 读手持武器 | `Player.lastHotbarItem`（**本移植版没有 `selectedItem`**）+ `inventory` 数组；`useAmmo>0` 是远程 |
 | 物品名 | `Terraria.Lang.GetItemNameValue(id)`（`runtime_invoke`）；**别每条都调**（~10ms/次），离线名表优先 |
-| **背包操作（增删改查）** | 槽位**按数组真实长度**（本移植版 **59** 格：0–9 快捷栏 / 10–49 主背包 / 50–58 钱币弹药，`arr.add(0x18).readS32()`）；查=逐格读 `type/stack`；增=`SetDefaults(id,false)`+`stack`（按 `Item.maxStack` 封顶）；删=`SetDefaults(0,false)`；改=改写 `stack`/复制到空格/用物品面板覆盖；刷新用**脏检查**（只更新变了的格子） |
+| **背包操作（增删改查）** | 槽位**按数组真实长度**（本移植版 **59** 格：0–9 快捷栏 / 10–49 主背包 / 50–58 钱币弹药，`arr.add(0x18).readS32()`）；查=逐格读 `type/stack`；增=`SetDefaults(id,false)`+`stack`（按 `Item.maxStack` 封顶）；删=`SetDefaults(0,false)`；改=改写 `stack`/复制到空格/用物品面板覆盖；刷新用**脏检查**（只更新变了的格子）。**类型化筛选**：弹药格（54–57）只列弹药、钱币格（50–53）只列钱币——弹药/钱币 ID 集合从物品表离线生成**区间串**内嵌脚本（约 250 字符），运行时按区间判成员，零文件读取；筛选与分类/搜索叠加 |
 | 天气「跟随 vs 维持」 | 同步时**同时比对开关真实勾选状态**（只比内部 STATE 会漏补 UI）；用 `auto` 标记区分「跟随游戏」（不维持，自然停→开关自动灭）与「用户点开」（每帧复写=无限维持）；关闭=立刻停本轮 + 2.5s 静默期 |
 | 无子弹发射的坑 | 写物品字段只能用 `setOn(IL.Item,…)`；**别同时留旧版 `topUpAmmo()`**（它把弹药补到 9999，和基准追踪打架） |
 

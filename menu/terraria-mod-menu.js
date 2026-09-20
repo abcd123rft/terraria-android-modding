@@ -108,6 +108,10 @@ var ITEM_NAMES = [
 "仙林浴缸\n仙林床\n仙林书架\n仙林梳妆台\n仙林烛台\n仙林蜡烛\n仙林椅\n仙林吊灯\n仙林箱\n仙林钟\n仙林门\n仙林灯\n仙林提灯\n仙林钢琴\n仙林平台\n仙林水槽\n仙林沙发\n仙林桌\n仙林工作台\n仙林陷阱箱\n仙林马桶\n仙林\n仙林墙\n神圣浴缸\n神圣床\n神圣书架\n神圣梳妆台\n神圣烛台\n神圣蜡烛\n神圣椅\n神圣吊灯\n华丽神圣箱\n神圣钟\n神圣门\n神圣灯\n神圣提灯\n神圣钢琴\n神圣平台\n神圣水槽\n神圣沙发\n神圣桌\n神圣工作台\n陷阱华丽神圣箱\n神圣马桶\n神圣砖\n神圣砖墙\n帕鲁金属胸甲\n帕鲁金属护腿\n花栗鼠斗篷\n飞檐走壁车\n哥特浴缸\n哥特床\n哥特梳妆台\n哥特烛台\n哥特蜡烛\n哥特吊灯\n哥特箱\n哥特钟\n哥特门\n哥特灯\n哥特提灯\n哥特钢琴\n哥特平台\n哥特水槽\n哥特沙发\n哥特陷阱箱\n哥特马桶\n恶魔浴缸\n恶魔床\n恶魔书架\n恶魔烛台\n恶魔蜡烛\n恶魔椅\n恶魔吊灯\n恶魔箱\n恶魔钟\n恶魔门\n恶魔梳妆台\n恶魔灯\n恶魔提灯\n恶魔钢琴\n恶魔平台\n恶魔水槽\n恶魔沙发\n恶魔桌\n恶魔马桶\n恶魔工作台\n恶魔陷阱箱\n猩红浴缸\n猩红床\n猩红书架\n猩红烛台\n猩红蜡烛\n猩红椅\n猩红吊灯\n猩红箱\n猩红钟\n猩红门\n猩红梳妆台\n猩红灯\n猩红提灯\n猩红钢琴\n猩红平台\n猩红水槽\n猩红沙发\n猩红桌\n猩红马桶\n猩红工作台\n猩红陷阱箱\n雪域浴缸\n雪域床\n雪域书架\n雪域烛台\n雪域蜡烛\n雪域椅\n雪域吊灯\n雪域箱\n雪域钟\n雪域门\n雪域梳妆台\n雪域灯\n雪域提灯\n雪域钢琴\n雪域平台\n雪域水槽\n雪域沙发\n雪域桌\n雪域马桶\n雪域工作台\n雪域陷阱箱\n小雪怪皮浴缸\n小雪怪皮床\n小雪怪皮书架\n小雪怪皮烛台\n小雪怪皮蜡烛\n小雪怪皮椅\n小雪怪皮吊灯\n小雪怪皮箱\n小雪怪皮钟\n小雪怪皮门\n小雪怪皮梳妆台\n小雪怪皮灯\n小雪怪皮提灯\n小雪怪皮钢琴\n小雪怪皮平台\n小雪怪皮水槽\n小雪怪皮沙发\n小雪怪皮桌\n小雪怪皮马桶\n小雪怪皮工作台\n小雪怪皮陷阱箱\n松木浴缸\n松木床\n松木书架\n松木烛台\n松木蜡烛\n松木吊灯\n松木箱\n松木钟\n松木梳妆台\n松木灯\n松木提灯\n松木钢琴\n松木平台\n松木水槽\n松木沙发\n松木马桶\n松木工作台\n松木陷阱箱\n复活节浴缸\n复活节床\n复活节书架\n复活节烛台\n复活节蜡烛\n复活节椅\n复活节吊灯\n复活节箱\n复活节钟\n复活节门\n复活节梳妆台\n复活节灯\n复活节提灯\n复活节钢琴\n复活节平台\n复活节水槽\n复活节沙发\n复活节桌\n复活节马桶\n复活节工作台\n复活节陷阱箱\n石浴缸\n石床\n石书架\n石烛台\n石蜡烛\n石椅\n石吊灯\n石箱\n石钟\n石梳妆台\n石灯\n石提灯\n石钢琴\n石水槽\n石沙发\n石桌\n石马桶\n石工作台\n石陷阱箱\n水母浴缸\n水母床\n水母书架\n水母烛台\n水母蜡烛\n水母椅\n水母吊灯\n水母箱\n水母钟\n水母门\n水母梳妆台\n水母灯\n水母提灯\n水母钢琴\n水母平台\n水母水槽\n水母沙发\n水母桌\n水母马桶\n水母工作台\n水母陷阱箱\n松树物块墙\n复活节物块\n复活节物块墙\n哥特砖\n哥特砖墙\n小雪怪皮物块\n小雪怪皮物块墙\n水母物块\n水母物块墙\n玩具毁灭砖\n混合\n松木\n松木墙\n鸟妖浴缸\n鸟妖床\n鸟妖书架\n鸟妖烛台\n鸟妖蜡烛\n鸟妖椅子\n鸟妖吊灯\n鸟妖箱\n鸟妖时钟\n鸟妖门\n鸟妖梳妆台\n鸟妖灯\n鸟妖灯笼\n鸟妖钢琴\n鸟妖平台\n鸟妖水槽\n鸟妖沙发\n鸟妖桌子\n鸟妖马桶\n鸟妖工作台\n受困鸟妖箱\n鸟妖块\n鸟妖墙\n云朵浴缸\n云朵床\n云朵书架\n云朵烛台\n云朵蜡烛\n云朵椅子\n云朵吊灯\n云朵箱\n云朵时钟\n云朵门\n云朵梳妆台\n云朵灯\n云朵灯笼\n云朵钢琴\n云朵水槽\n云朵沙发\n云朵桌子\n云朵马桶\n云朵工作台\n受困云朵箱\n昏域浴缸\n昏域床\n昏域书架\n昏域烛台\n昏域蜡烛\n昏域椅子\n昏域吊灯\n昏域箱\n昏域时钟\n昏域门\n昏域梳妆台\n昏域灯\n昏域灯笼\n昏域钢琴\n昏域平台\n昏域水槽\n昏域沙发\n昏域桌子\n昏域马桶\n昏域工作台\n受困昏域箱\n圆月块\n新月墙\n图书员浴缸\n图书员床\n图书员书架\n图书员烛台\n图书员蜡烛\n图书员椅子\n图书员吊灯\n图书员箱\n图书员时钟\n图书员门\n图书员梳妆台\n图书员灯\n图书员灯笼\n图书员钢琴\n图书员平台\n图书员水槽\n图书员沙发\n图书员桌子\n图书员马桶\n图书员工作台\n受困图书员箱\n图书员块\n图书员墙\n尖刺浴缸\n尖刺床\n尖刺书架\n尖刺烛台\n尖刺蜡烛\n尖刺椅子\n尖刺吊灯\n尖刺箱\n尖刺时钟\n尖刺门\n尖刺梳妆台\n尖刺灯\n尖刺灯笼\n尖刺钢琴\n尖刺平台\n尖刺水槽\n尖刺沙发\n尖刺桌子\n尖刺马桶\n尖刺工作台\n受困尖刺箱\n尖刺块\n尖刺墙\n办公室浴缸\n办公室床\n办公室书架\n办公室烛台\n办公室蜡烛\n办公室椅子\n办公室吊灯\n办公室箱\n办公室时钟\n办公室门\n办公室梳妆台\n办公室灯\n办公室灯笼\n办公室钢琴\n办公室平台\n办公室水槽\n办公室沙发\n办公室桌子\n办公室马桶\n办公室工作台\n受困办公室箱\n办公室块\n办公室墙\n禁戒浴缸\n禁戒床\n禁戒书架\n禁戒烛台\n禁戒蜡烛\n禁戒椅子\n禁戒吊灯\n禁戒箱\n禁戒时钟\n禁戒门\n禁戒梳妆台\n禁戒灯\n禁戒灯笼\n禁戒",
 "钢琴\n禁戒平台\n禁戒水槽\n禁戒沙发\n禁戒桌子\n禁戒马桶\n禁戒工作台\n受困禁戒箱\n禁戒块\n禁戒墙\n水族馆浴缸\n水族馆床\n水族馆书架\n水族馆烛台\n水族馆蜡烛\n水族馆椅子\n水族馆吊灯\n水族馆时钟\n水族馆门\n水族馆梳妆台\n水族馆灯\n水族馆灯笼\n水族馆钢琴\n水族馆平台\n水族馆水槽\n水族馆沙发\n水族馆桌子\n水族馆马桶\n水族馆工作台\n水族馆块\n水族馆墙\n巨石浴缸\n巨石床\n巨石书架\n巨石烛台\n巨石蜡烛\n巨石椅子\n巨石吊灯\n巨石箱\n巨石时钟\n巨石门\n巨石梳妆台\n巨石灯\n巨石灯笼\n巨石钢琴\n巨石平台\n巨石水槽\n巨石沙发\n巨石桌子\n巨石马桶\n巨石工作台\n受困巨石箱\n巨石块\n巨石墙\n锋利尖刺块\nItemName.DemonAltarIcon\nItemName.CrimsonAltarIcon\n露娜的符文妖精兜帽\n露娜的符文妖精上衣\n露娜的符文妖精裤\n露娜的符文妖精翅膀\n露娜的符文妖精斗篷\n巨龙蛋\nItemName.FoxparksTagEffect\n八音盒（骷髅王）\n八音盒（彩虹巨石）\n八音盒（静默）\nK记鸡腿\n上校装饰\n上校西服\n上校西裤\n外卖车钥匙\n炸鸡块\nItemName.XDKFCGolfPainting1\n快餐吧台\n小鸡仔\n快餐餐椅\n快餐餐桌\n上校画像\n汉堡广告\n全家桶广告\nItemName.XDBloodOrange\nItemName.XDGoldenChest\n百度贴吧滑稽飞盘\n泰拉瑞薯\n薯光\n摇滚薯\n橙心优选帽\n橙心优选服\n橙心优选裤\n音符帽\n黑色暗影甲\n黑色暗影裤\n红白帽\n红白西服\n红白西裤\n半次元变身头饰\n半次元COS服\n半自动次元靴\n滴滴小车\n青桔电动车\n大狗头\n狗膀子\n狗腿子\n启智之帽\n远征之服\n疾步之靴\n随刻机甲头盔\n随刻机甲战衣\n随刻机甲战靴\n讯飞飞盘\nAC娘油画像\n虎牙的小油画\n虎牙的中幅油画\n虎牙的油画\n斗鱼娘的小油画\n斗鱼娘的中幅油画\n斗鱼娘的油画\n金逸Popcorn电影海报\n心动镇风景画\n心动油画\n心动镇小油画\n嗒啦啦写真\n嗒噗合影\n噗噜噜小像\n心动短剑\n噗噜短剑\n噗噜噜飞盘\n活力橙假发\n心动橙西装\n心动橙西裤\n心动橙马尾\n心动橙连衣裙\n心动橙靴\n嗒啦啦马尾辫\n嗒啦啦连衣裙\n嗒啦啦鞋\n豪华敞篷车\n嗒噗小货车\n小六遥控器\n小快遥控器\n一片树叶\n声优酱应援海报\n咖色长发\n百变学生制服\n百变制服鞋\nLOOK飞盘\n咕呱\n咕呱\n篮球\n虎扑飞盘\n噗噜噜充电宝\n彩色气球相片\n派对开始相片\n生日蛋糕相片\n烟花 (新)\n烟花 (年)\n烟花 (快)\n烟花 (乐)\n烟花 (龙)\n神秘的东方头盔\n神秘的东方长袍\nItemName.XDSpringPants\n带带玩偶\n带带的大头照\n嗒啦啦的最新发型\n嗒啦啦的拼色连衣裙\n嗒啦啦的撞色过膝袜\n星星点火器\n苏拉的斗篷\n苏拉的兜帽\n八音盒（传说法师）\n大法师的梳妆台\n宝箱米米\n大法师的画像\n烟花 (蛇)\nItemName.XDSpringRocket7\nItemName.XDSpringRocket8\nItemName.XDSpringRocket9\nItemName.XDSpringRocket10\nItemName.XDSpringRocket11\nItemName.XDSpringRocket12\nItemName.XDSpringRocket13\nItemName.XDSpringRocket14\nItemName.XDSpringRocket15\nItemName.XDSpringRocket16",
 ];
+/* ── 背包筛选用的物品 ID 集合（离线从物品库 CSV 生成：弹药ID>0 的都是弹药，71-74 是钱币）──
+   弹药格只列出这些，钱币格只列钱币。游戏更新加了新弹药的话，重跑生成脚本即可。 */
+var BAG_FILTER = { ammo: "23,27,40-41,47,51,71-75,97,169,234,265,278,283,353,370,408,515-516,545-546,771-774,780-784,931,949,988,1179,1235,1246,1261,1302,1310,1334-1335,1341-1342,1349-1352,1614,1783,1785,1836,3003,3009-3011,3103-3104,3108,3567-3568,4445-4449,4457-4459,4915,5348,5377-5380,5392-5394", coin: "71-74" };
+
 function log() { try { console.log(CFG.logPrefix + ' ' + Array.prototype.join.call(arguments, ' ')); } catch (e) {} }
 function err(where, e) { log(where + ' 失败：' + e + (e && e.stack ? '\n' + e.stack : '')); }
 
@@ -118,6 +122,24 @@ var NAMES = (function () {
   var arr = ITEM_NAMES.join('').split('\n');
   return { count: arr.length, get: function (id) { return (id >= 0 && id < arr.length) ? (arr[id] || '') : ''; } };
 })();
+/* 背包筛选：把 "1-4,7,9-12" 解析成区间数组并缓存 */
+var BAG_RANGES = {};
+function bagRangeHit(kind, id) {
+  var key = String(kind);
+  if (!BAG_RANGES[key]) {
+    var r = [], src = (BAG_FILTER[key] || '');
+    if (src) src.split(',').forEach(function (tok) {
+      var m = tok.split('-');
+      var lo = parseInt(m[0], 10), hi = m.length > 1 ? parseInt(m[1], 10) : lo;
+      if (isFinite(lo) && isFinite(hi)) r.push([lo, hi]);
+    });
+    BAG_RANGES[key] = r;
+  }
+  var arr = BAG_RANGES[key];
+  for (var i = 0; i < arr.length; i++) if (id >= arr[i][0] && id <= arr[i][1]) return true;
+  return false;
+}
+
 function itemNameFast(id) {
   var nm = NAMES.get(id);
   if (!nm) { try { nm = IL.itemName(id) || ''; } catch (e) {} }   // 名表没收录 → 兜底问游戏
@@ -1219,7 +1241,8 @@ var UI = (function () {
   }
 
   /* 分类选物品：类别页 → 物品页（分页，每页 40 件）→ 点选回调 */
-  function pickItem(onPick, startCat) {
+  /* startFilter: null | 'ammo' | 'coin' —— 从弹药格/钱币格点「放入」时只列对应物品 */
+  function pickItem(onPick, startCat, startFilter) {
     var K = S.ctx; if (!K) return;
     var o = overlay('选择物品'); if (!o) return;
     try { ICON.warm(); } catch (e) {}
@@ -1240,12 +1263,14 @@ var UI = (function () {
        分类改成横向一排，点完直接在下面出列表（不再跳转到类别页）；
        搜索用系统输入法（EditText），按名字过滤（用离线名表，零 il2cpp 调用）。 */
     var curCat = -1, curQuery = '', curIds = [], nameCache = {};
+    var curFilter = (startFilter === 'ammo' || startFilter === 'coin') ? startFilter : null;
     /* 上限取「运行时物品数」与「离线名表长度」的较大者：
        游戏更新加了新物品时，新 ID 照样能列出（名字用运行时兜底，图标没有就显示 ID 占位）。 */
     var ITEM_MAX = Math.max(NAMES.count, (function () { try { return IL.itemCount() | 0; } catch (e) { return 0; } })());
     log('物品范围上限 = ' + ITEM_MAX + '（离线名表 ' + NAMES.count + '）');
     var rows = [], curFirst = -1, topPad = null, botPad = null, win = null;
     var searchEt = null, infoTv = null, chipBtns = {}, chipRow = null, SCROLLER = null, WATCHER = null;
+    var filterRow = null, filterTv = null;
     var catCache = {};
 
     function clear() { o.body.removeAllViews(); topPad = botPad = null; rows = []; }
@@ -1264,8 +1289,8 @@ var UI = (function () {
       nameCache[id] = str;
       return str;
     }
-    /* 按「分类 + 搜索词」算出当前要显示的 id 列表 */
-    function computeIds() {
+    /* 按「分类 + 搜索词」算出候选 id 列表（未筛选） */
+    function computeIdsRaw() {
       var q = (curQuery || '').trim().toLowerCase();
       if (!q) {
         var c = catIds(curCat);
@@ -1285,6 +1310,14 @@ var UI = (function () {
         if (nm.toLowerCase().indexOf(q) >= 0) out2.push(id);
       }
       return out2;
+    }
+    /* 背包筛选：弹药格只留弹药、钱币格只留钱币（表是离线生成的 ID 区间） */
+    function computeIds() {
+      var out = computeIdsRaw();
+      if (!curFilter) return out;
+      var f = [];
+      for (var i = 0; i < out.length; i++) if (bagRangeHit(curFilter, out[i])) f.push(out[i]);
+      return f;
     }
     function makeTile() {
       var t = {};
@@ -1389,7 +1422,8 @@ var UI = (function () {
     /* 重新算 id 列表 + 重建窗口（点分类 / 改搜索词都走这里） */
     function refreshList(reset) {
       curIds = computeIds();
-      if (infoTv) infoTv.setText(jStr('共 ' + curIds.length + ' 件' + (curQuery ? ('（搜索：' + curQuery + '）') : '')));
+      paintFilter();
+      if (infoTv) infoTv.setText(jStr('共 ' + curIds.length + ' 件' + (curFilter ? '（已筛选）' : '') + (curQuery ? ('（搜索：' + curQuery + '）') : '')));
       if (reset || !rows.length) {
         buildWindow();
         try { o.scroll.scrollTo(0, 0); } catch (e) {}
@@ -1399,7 +1433,7 @@ var UI = (function () {
         try { o.scroll.scrollTo(0, 0); } catch (e) {}
         applyWindow(0);
       }
-      log('物品列表：分类=' + (curCat < 0 ? '全部' : CAT_NAMES[curCat]) + ' 搜索="' + curQuery + '" → ' +
+      log('物品列表：' + (curFilter ? ('筛选=' + curFilter + ' ') : '') + '分类=' + (curCat < 0 ? '全部' : CAT_NAMES[curCat]) + ' 搜索="' + curQuery + '" → ' +
           curIds.length + ' 件（' + Math.ceil(curIds.length / COLS) + ' 行）');
     }
     function buildWindow() {
@@ -1420,6 +1454,13 @@ var UI = (function () {
         try { chipBtns[k].setTextColor(on ? C.title : C.sub); } catch (e) {}
         try { chipBtns[k].setBackground(on ? K.flatOn(C.btn) : K.flat(C.btn)); } catch (e) {}
       }
+    }
+    /* 筛选条：只在带筛选打开时显示（分类 chips 同时隐藏），一键可看全部 */
+    function paintFilter() {
+      var on = !!curFilter;
+      try { if (filterRow) filterRow.setVisibility(on ? VIS : GONE); } catch (e) {}
+      try { if (chipRow) chipRow.setVisibility(on ? GONE : VIS); } catch (e) {}
+      if (on && filterTv) filterTv.setText(jStr((curFilter === 'coin' ? '只看钱币' : '只看弹药') + '（' + curIds.length + ' 件）'));
     }
     function chip(label, cat) {
       var b = BT.$new(act); b.setText(jStr(label)); b.setTextSize(11); b.setTextColor(C.sub);
@@ -1464,13 +1505,24 @@ var UI = (function () {
       hs.addView(bar);
       chipRow = hs;
       o.root.addView(hs, 2);
+      /* ②b 筛选提示行（默认隐藏，paintFilter 控制） */
+      var frow = LL.$new(act); frow.setOrientation(0); frow.setLayoutParams(LLP.$new(MATCH, WRAP));
+      filterTv = TV.$new(act); filterTv.setTextSize(11); filterTv.setTextColor(C.title);
+      filterTv.setPadding(dp(6), dp(2), dp(4), dp(2)); filterTv.setLayoutParams(LLP.$new(0, WRAP, 1.0));
+      frow.addView(filterTv);
+      var fclr = BT.$new(act); fclr.setText(jStr('显示全部物品')); fclr.setTextSize(11); fclr.setTextColor(C.sub);
+      K.compact(fclr); fclr.setBackground(K.flat(C.btn)); fclr.setLayoutParams(LLP.$new(WRAP, WRAP));
+      K.bindClick(fclr, function () { curFilter = null; refreshList(true); });
+      frow.addView(fclr);
+      filterRow = frow;
+      o.root.addView(frow, 3);
       /* ③ 件数 */
       var irow = LL.$new(act); irow.setOrientation(0); irow.setLayoutParams(LLP.$new(MATCH, WRAP));
       infoTv = TV.$new(act); infoTv.setTextSize(11); infoTv.setTextColor(C.sub);
       infoTv.setPadding(dp(6), dp(2), dp(4), dp(2));
       infoTv.setLayoutParams(LLP.$new(0, WRAP, 1.0));
       irow.addView(infoTv);
-      o.root.addView(irow, 3);
+      o.root.addView(irow, 4);
       /* ④ 搜索框的文字变化 → 过滤（TextWatcher 是单接口多方法，一个动态类搞定） */
       if (!WATCHER) {
         var TW = juse('android.text.TextWatcher');
@@ -1844,7 +1896,7 @@ var UI = (function () {
     promptNumber: promptNumber, pickItem: pickItem, showPage: showPage, post: postMain, S: S,
     bagBuild: bagBuild, bagRefresh: bagRefresh, bagSelect: bagSelect, bagSlot: bagSlot, bagItem: bagItem,
     bagSlots: function () { return bagSlots(); }, bagSelect: bagSelect, bagTap: bagTap, bagClosePopup: bagClosePopup,
-    bagPopup: bagPopup,
+    bagPopup: bagPopup, bagKind: bagGroupOf,
     bagDebug: function () {
       var h = S.groups['bag-grid'];
       return { built: BAG.built, builds: BAG.builds || 0, tiles: BAG.tiles.length,
@@ -2409,6 +2461,9 @@ var ACT = {
     var d = (UI.bagSlot() >= 0) ? { slot: UI.bagSlot() } : null;
     log('背包：bag-replace 目标槽 = ' + (d ? d.slot : '无'));
     if (!d) return UI.say('先点一个格子（空格也行）再替换');
+    var kind = UI.bagKind(d.slot).kind;                     // 弹药格→只列弹药，钱币格→只列钱币
+    var filt = (kind === 'ammo' || kind === 'coin') ? kind : null;
+    log('背包：槽' + d.slot + ' 类型=' + kind + ' 筛选=' + (filt || '无'));
     UI.pickItem(function (id) {
       var p = IL.player(); if (!p) return;
       var it = IL.slotItem(IL.invArr(p), d.slot);
@@ -2417,7 +2472,7 @@ var ACT = {
       UI.bagRefresh(true);
       log('[背包] 槽' + d.slot + ' 替换为 ' + itemNameFast(id));
       UI.say('槽' + d.slot + ' 已替换为 ' + itemNameFast(id));
-    });
+    }, null, filt);
   },
   'bag-clear': function () {
     if (!BAG_CLEAR_ARMED) {

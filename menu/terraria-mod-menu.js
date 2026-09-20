@@ -557,8 +557,9 @@ var ALL_IDS = null;
 
 /* ═════════════════════════ 物品图标（从安装包解出的图集里裁剪） ═════════════════════════
    图标来源：安装包内两张 2048×2048 图集（离线解出，见 物品图标/README.md）。
-   矩形表就在上面的 ICON_TABLE；**图集 PNG 是上下翻转存放的**，所以
-   正确裁剪矩形 = (X, 2048-Y-H, X+W, 2048-Y)。
+   矩形表就在上面的 ICON_TABLE；**图集 PNG 已经是正向存放的**（2026-09-20 修正：
+   原来的图集是「整幅上下镜像 + R/B 通道互换」，导致物品图标倒立、金币发蓝；
+   素材已用 物品图标/修正图集.py 修正），所以裁剪矩形就是朴素的 (X, Y, X+W, Y+H)。
    位图来源顺序：① 游戏私有缓存 /data/user/0/com.xd.terraria/cache/dsha_atlas_N.png
                  ② 容器里的本地 HTTP 静态服务（取到后写进上面的私有缓存，之后就不再依赖它）
                  ③ 直接 decodeFile(/sdcard/.../atlas_N.png)（本机被分区存储挡着，留作回退）
@@ -670,7 +671,7 @@ var ICON = (function () {
     try {
       if (!J_BMP) J_BMP = Java.use('android.graphics.Bitmap');
       var B = J_BMP;
-      var sx = r.x, sy = ATLAS_H - r.y - r.h;
+      var sx = r.x, sy = r.y;          // 素材已修正为正向（见文件头注释）
       var f = px / Math.max(r.w, r.h);
       if (f > 1.02 || f < 0.98) {
         /* 裁剪 + 放大一次做完（以前是 createBitmap 再 createScaledBitmap，两次分配两次 JNI 调用） */

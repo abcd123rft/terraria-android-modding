@@ -149,6 +149,10 @@ use `setTimeout` (the Frida JS thread).
 | Weapon edits | set `Item.damage/crit/useTime/shootSpeed/mana`; **on=write+remember original, off=restore**; revert = `SetDefaults(type,false)` |
 | Held weapon | `Player.lastHotbarItem` (**this port has no `selectedItem`**) + `inventory`; `useAmmo>0` means ranged |
 | Slot-kind filtering | Ammo slots (54–57) list only ammo, coin slots (50–53) only coins: compress the ID set from the item table into a **range string** embedded in the script (~250 chars) and test membership by range at runtime — no file reads |
+| Icon atlas export | Unity textures are stored **bottom-up** and the bytes may be **BGRA**: a converter that
+skips the row flip and the R/B swap yields **upside-down icons with blue gold coins**. The old workaround (crop at
+`H-Y-H`) only fixed the *position*, not the content — verify icon orientation with a **potion bottle / coin**, never with
+a sword or hammer (they are near-symmetric, so a flip looks fine). Fix the asset instead, then crop `(X, Y, X+W, Y+H)`. |
 | Item name | `Terraria.Lang.GetItemNameValue(id)` via `runtime_invoke` — **~10 ms per call**, use an offline name table instead |
 | **Inventory CRUD** | slot count **read at runtime** (this port: **59** slots = 0–9 hotbar / 10–49 main / 50–58 coins+ammo; `arr.add(0x18).readS32()`); read = per-slot `type/stack`; add = `SetDefaults(id,false)` + `stack` (clamp by `Item.maxStack`); delete = `SetDefaults(0,false)`; modify = rewrite `stack` / copy to an empty slot / overwrite via the item picker; refresh with **dirty checks** (only update changed tiles) |
 | Weather "follow vs hold" | when syncing, **also compare the switch's real checked state** (comparing internal state alone misses UI repairs); tag auto-synced switches so they *don't* hold the weather (it may end naturally → switch turns off), while user-opened ones re-assert every frame; turning off = stop this round immediately + 2.5 s mute |

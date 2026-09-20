@@ -105,12 +105,18 @@ SCROLLER = Java.registerClass({ name: uniq('Scr'), implements: [juse('android.vi
 o.scroll.setOnScrollChangeListener(SCROLLER);
 ```
 
-## 5. 图标裁剪（含上下翻转）
+## 5. 图标裁剪（2026-09-20 更正）
 
-```js
-var crop = B.createBitmap.overload('android.graphics.Bitmap','int','int','int','int','android.graphics.Matrix','boolean')
-            .call(B, atlas, r.x, 2048 - r.y - r.h, r.w, r.h, matrix /* setScale(f,f) */, false);   // 一次完成裁+缩
-```
+**早期做法（已废弃）**：把矩形 y 换成 `图高−Y−H`，靠"翻着裁"来抵消图集的上下镜像。
+它只把图块**位置**找对了，图块**内容**仍然是倒的 —— 用剑/锤这类上下近似对称的图标看不出来，
+换成药水瓶（瓶口朝上）或金币（金色）立刻露馅。
+
+**现在的做法**：素材层修正（`物品图标/修正图集.py`）：
+- Unity 纹理自下而上存 → PNG 写出时要**逐行翻转**；
+- 纹理字节序是 BGRA → 写出 RGBA 时要**换 R/B**。
+
+修完图集在任何看图软件里都是正的，脚本里直接 `(X, Y, X+W, Y+H)` 裁。
+换图集后**必须刷设备缓存**：`图标HTTP服务.py` + `TERRARIA_SYS_MENU.icon.warm(true)`，再重载脚本。
 
 ## 6. 天气「跟随 vs 维持」
 

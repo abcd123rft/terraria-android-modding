@@ -4,7 +4,7 @@
   1) 图集矩形表以「按 key 排序」的顺序序列化在 resources.assets 中（每条约 22 字节）；
   2) 物品的 key = int32(CRC32("item_<id>.png"))；
   3) 记录字段：key(int32) atlasIndex(int32) W(int16) H(int16) X(int16) Y(int16) scale(int16) flag(int32)；
-  4) 图集 PNG 是上下翻转存放的，所以裁剪矩形为 (X, 图高-Y-H, X+W, 图高-Y)。
+  4) 图集 PNG 曾经是上下翻转存放的（2026-09-20 已修正：见 修正图集.py，现为正向且通道正常）；现在图集已修正为正向，裁剪矩形就是朴素的 (X, Y, X+W, Y+H)。
 """
 import struct, zlib, json, os, sys
 

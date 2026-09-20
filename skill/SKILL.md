@@ -238,7 +238,7 @@ act.addContentView(panel, new FrameLayout.LayoutParams(dp(250), WRAP));
    另一份同构表在偏移 3042920（1024 低清版）。
 3. **key = `int32(CRC32("item_<id>.png"))`**（小写 + `.png`，26/26 实测命中）。
    找表偏移的办法：用运行时 `PackedEntry.TextureId` 的真值拼字节签名在 `resources.assets` 里搜。
-4. **图集 PNG 上下翻转存放** → 裁剪矩形 `(X, 2048−Y−H, X+W, 2048−Y)`（不翻会得到「上对下错位」的花屏）。
+4. **图集 PNG 现在是正向的**（2026-09-20 修正）：早期导出漏了「Unity 纹理自下而上」与「BGRA 通道序」两步，图集是整幅上下镜像 + 红蓝互换 —— 表现是**物品图标倒立、金币发蓝**；旧文档里「把 y 换成 2048−Y−H」只修对了位置、没修内容（当时用剑/锤这类上下近似对称的图标验证，所以没看出来）。现在用 `修正图集.py` 修素材，裁剪就是朴素的 `(X, Y, X+W, Y+H)`。
 5. **别名物品**：约 181 件（旧版/共用贴图，例：3665 受困宝箱用的是 id 48 的贴图）贴图名不是
    `item_<id>.png` → 用运行时 `TextureAssets.Item[id].Value.PackedEntry.TextureId` 拿到 key 再离线查矩形
    （`脚本/补别名图标.py gen|collect|parse`；剩 33 件贴图没进图集，只能显示 ID 占位）。
